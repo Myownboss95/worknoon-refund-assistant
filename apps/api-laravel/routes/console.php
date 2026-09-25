@@ -7,10 +7,10 @@ use Illuminate\Support\Facades\Artisan;
 use Psr\Log\LoggerInterface;
 
 /*
-| Run once by docker/entrypoint.sh when the container starts. The hard check (refuse to boot with a
-| weak ADMIN_TOKEN in production outside demo mode) already runs on every boot in AppServiceProvider;
-| this adds the one-time warning for a weak token in demo mode, which would otherwise repeat on every
-| request under FrankenPHP's classic mode.
+| Run once by docker/entrypoint.sh when the container starts, so a weak ADMIN_TOKEN in production
+| outside demo mode stops the container before it serves anything. HTTP requests enforce the same check
+| in AppServiceProvider. It also logs the one-time warning for a weak token in demo mode, which would
+| otherwise repeat on every request under FrankenPHP's classic mode.
 */
 Artisan::command('refunds:check-admin-token', function (AdminTokenCheck $check, LoggerInterface $logger): int {
     $check->enforce();

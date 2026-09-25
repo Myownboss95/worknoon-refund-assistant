@@ -132,8 +132,12 @@ final class AppServiceProvider extends ServiceProvider
 
         $config = self::config($this->app);
 
-        // Refuse to boot in production with a weak admin token unless DEMO_MODE is on.
-        $this->app->make(AdminTokenCheck::class)->enforce();
+        // Refuse to serve HTTP in production with a weak admin token unless DEMO_MODE is on. Console
+        // commands (composer's package:discover, migrations) must still run without one; containers
+        // enforce it at start-up through `refunds:check-admin-token` in docker/entrypoint.sh.
+        if (! $this->app->runningInConsole()) {
+            $this->app->make(AdminTokenCheck::class)->enforce();
+        }
 
         // Only these proxies may set X-Forwarded-For; with none configured the socket address is the client.
         TrustProxies::at($config->array('refunds.trusted_proxies'));

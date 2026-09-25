@@ -25,9 +25,8 @@ COPY apps/api-laravel/composer.json apps/api-laravel/composer.lock ./
 RUN composer install --no-dev --no-scripts --no-autoloader --no-interaction --no-progress --prefer-dist
 
 COPY apps/api-laravel/ ./
-# APP_ENV=build: no ADMIN_TOKEN exists at build time, so skip the production boot check.
 RUN composer dump-autoload --no-dev --optimize --classmap-authoritative --no-scripts \
-    && APP_ENV=build php artisan package:discover --ansi
+    && php artisan package:discover --ansi
 
 # --- Runtime ---------------------------------------------------------------------------------------
 FROM base AS runtime
