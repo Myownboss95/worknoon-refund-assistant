@@ -1,28 +1,45 @@
 name: worknoon-refund-assistant
 
+# Everything has a working default, so `docker compose up --build` needs no .env. The defaults are
+# demo defaults (DEMO_MODE=true, well-known admin token); see README "Running outside a demo".
+
 x-api-env: &api-env
   LLM_PROVIDER: ${LLM_PROVIDER:-mock}
   LLM_MODEL: ${LLM_MODEL:-claude-haiku-4-5}
   ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  LLM_MAX_CALLS_PER_HOUR: ${LLM_MAX_CALLS_PER_HOUR:-1000}
+  DEMO_MODE: ${DEMO_MODE:-true}
   ADMIN_TOKEN: ${ADMIN_TOKEN:-demo-admin}
   CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:8080}
-  RATE_LIMIT_VERIFY_PER_MINUTE: ${RATE_LIMIT_VERIFY_PER_MINUTE:-300}
-  RATE_LIMIT_MESSAGES_PER_MINUTE: ${RATE_LIMIT_MESSAGES_PER_MINUTE:-300}
+  # Only the web container's nginx may set X-Forwarded-For; everyone else is keyed by socket address.
+  TRUSTED_PROXIES: 172.28.0.10
+  RATE_LIMIT_VERIFY_PER_MINUTE: ${RATE_LIMIT_VERIFY_PER_MINUTE:-60}
+  RATE_LIMIT_MESSAGES_PER_MINUTE: ${RATE_LIMIT_MESSAGES_PER_MINUTE:-60}
+  RATE_LIMIT_ADMIN_FAILURES_PER_MINUTE: ${RATE_LIMIT_ADMIN_FAILURES_PER_MINUTE:-20}
+  MAX_CONVERSATIONS_PER_ORDER_PER_DAY: ${MAX_CONVERSATIONS_PER_ORDER_PER_DAY:-20}
   CONTRACTS_PATH: /srv/contracts
   POLICY_DOC_PATH: /srv/policy/refund-policy.md
+
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
 
 services:
   db:
     image: postgres:17-alpine
     environment:
       POSTGRES_USER: refunds
-      POSTGRES_PASSWORD: refunds
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-refunds}
       POSTGRES_DB: refunds_laravel
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:-refunds_app}
     volumes:
       - db-data:/var/lib/postgresql/data
-      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./docker/postgres/init.sh:/docker-entrypoint-initdb.d/init.sh:ro
+    # Published on localhost only, for local development and the backends' test suites.
     ports:
-      - "${DB_HOST_PORT:-55432}:5432"
+      - "127.0.0.1:${DB_HOST_PORT:-55432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U refunds -d refunds_laravel && psql -U refunds -d refunds_nest -c 'select 1' >/dev/null"]
       interval: 3s
@@ -46,13 +63,13 @@ services:
       DB_HOST: db
       DB_PORT: 5432
       DB_DATABASE: refunds_laravel
-      DB_USERNAME: refunds
-      DB_PASSWORD: refunds
+      DB_USERNAME: refunds_app
+      DB_PASSWORD: ${APP_DB_PASSWORD:-refunds_app}
     depends_on:
       db:
         condition: service_healthy
     ports:
-      - "3002:3002"
+      - "127.0.0.1:3002:3002"
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3002/api/v1/health >/dev/null || exit 1"]
       interval: 5s
@@ -70,12 +87,12 @@ services:
       <<: *api-env
       NODE_ENV: production
       PORT: 3001
-      DATABASE_URL: postgresql://refunds:refunds@db:5432/refunds_nest
+      DATABASE_URL: postgresql://refunds_app:${APP_DB_PASSWORD:-refunds_app}@db:5432/refunds_nest
     depends_on:
       db:
         condition: service_healthy
     ports:
-      - "3001:3001"
+      - "127.0.0.1:3001:3001"
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3001/api/v1/health >/dev/null || exit 1"]
       interval: 5s
@@ -91,6 +108,9 @@ services:
         condition: service_healthy
       api-nest:
         condition: service_healthy
+    networks:
+      default:
+        ipv4_address: 172.28.0.10
     ports:
       - "8080:80"
 
