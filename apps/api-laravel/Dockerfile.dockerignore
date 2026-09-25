@@ -1,0 +1,21 @@
+# Ignore rules for `docker compose build api-laravel` (context: repository root).
+**/.git
+**/node_modules
+apps/*
+!apps/api-laravel
+apps/api-laravel/.env
+apps/api-laravel/.env.*
+!apps/api-laravel/.env.example
+apps/api-laravel/vendor
+apps/api-laravel/storage/logs/*
+apps/api-laravel/storage/framework/cache/*
+apps/api-laravel/storage/framework/sessions/*
+apps/api-laravel/storage/framework/views/*
+apps/api-laravel/storage/framework/testing
+apps/api-laravel/bootstrap/cache/*.php
+apps/api-laravel/.phpunit.cache
+apps/api-laravel/.phpunit.result.cache
+apps/api-laravel/tests
+packages
+tests
+docs

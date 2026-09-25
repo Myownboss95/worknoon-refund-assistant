@@ -1,0 +1,17 @@
+# Used when building with apps/api-laravel as the context. The compose build uses the repository
+# root as its context, which reads Dockerfile.dockerignore instead.
+.env
+.env.*
+!.env.example
+vendor
+node_modules
+storage/logs/*
+storage/framework/cache/*
+storage/framework/sessions/*
+storage/framework/views/*
+storage/framework/testing
+bootstrap/cache/*.php
+.phpunit.cache
+.phpunit.result.cache
+tests
+.git
