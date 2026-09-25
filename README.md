@@ -39,6 +39,13 @@ On first boot each API runs its migrations and seeds the 15 demo customers. The 
 button in the admin dashboard (or `POST /admin/demo/reset`) restores the seed at any time, with
 dates recalculated relative to today.
 
+### Running outside a demo
+
+The compose defaults are for a local demo: `DEMO_MODE=true` and the well-known admin token. For anything
+reachable by other people, set `DEMO_MODE=false`, a strong `ADMIN_TOKEN` (32+ characters; the apps refuse to
+start without one), and your own `POSTGRES_PASSWORD` and `APP_DB_PASSWORD`. Postgres and the two API ports are
+published on `127.0.0.1` only; nginx on `:8080` is the public entry point.
+
 ### Using the real model
 
 ```bash
@@ -54,9 +61,14 @@ The header badge switches from `AI: mock` to `AI: claude-haiku-4-5`.
 | `LLM_PROVIDER` | `mock` | `mock` or `anthropic`. Without an API key the backends always use the mock |
 | `ANTHROPIC_API_KEY` | empty | Anthropic API key |
 | `LLM_MODEL` | `claude-haiku-4-5` | Model used for extraction and replies |
-| `ADMIN_TOKEN` | `demo-admin` | Value of the `X-Admin-Token` header for `/admin/*` |
-| `RATE_LIMIT_VERIFY_PER_MINUTE` | `300` in compose, `60` in the apps | Per-IP limit on `POST /customers/verify`. Compose raises it so the contract suite can be rerun back to back |
-| `RATE_LIMIT_MESSAGES_PER_MINUTE` | `300` in compose, `60` in the apps | Per-IP limit on `POST /conversations/{id}/messages` |
+| `DEMO_MODE` | `true` in compose, `false` in the apps | Enables `POST /admin/demo/reset` and allows the demo admin token |
+| `ADMIN_TOKEN` | `demo-admin` (compose, demo only) | Value of the `X-Admin-Token` header for `/admin/*`. Outside demo mode the apps refuse to start unless it is at least 32 characters and not `demo-admin` |
+| `RATE_LIMIT_VERIFY_PER_MINUTE` | `60` | Per-IP limit on `POST /customers/verify` |
+| `RATE_LIMIT_MESSAGES_PER_MINUTE` | `60` | Per-IP limit on `POST /conversations/{id}/messages` |
+| `RATE_LIMIT_ADMIN_FAILURES_PER_MINUTE` | `20` | Failed admin-token attempts per IP per minute before `/admin/*` answers 429 |
+| `MAX_CONVERSATIONS_PER_ORDER_PER_DAY` | `20` | Conversations one order can open per rolling 24 hours |
+| `LLM_MAX_CALLS_PER_HOUR` | `1000` | Global budget of real model calls per hour. Past it, requests fail safe to escalation instead of spending more |
+| `POSTGRES_PASSWORD`, `APP_DB_PASSWORD` | `refunds`, `refunds_app` | Superuser and app-role passwords, applied when the database volume is first created |
 | `DB_HOST_PORT` | `55432` | Host port for Postgres (for local development and tests) |
 
 ## Demo scenarios
@@ -188,6 +200,22 @@ PHP and TypeScript.
 9. **Idempotency:** an item with an approved or pending refund can't be refunded again (R05).
 10. **Logging hygiene:** no raw messages or prompts in logs, and emails are masked.
 
+### Abuse and DoS controls
+
+Volumetric DDoS protection belongs in front of the app (a CDN or WAF). Inside the app:
+
+- **Rate limits** per client IP on verify, messages and failed admin logins, plus a global per-IP ceiling in
+  nginx (`limit_req`). The client IP comes only from the socket or from the nginx container (`TRUSTED_PROXIES`),
+  and nginx overwrites `X-Forwarded-For`, so the limits can't be bypassed with a spoofed header.
+- **Caps on work per request:** 64 KB request bodies at nginx, 1,000-character messages, 20 items, 100 rows per
+  admin page, 10,000 pages.
+- **One turn at a time per conversation:** a conversation is claimed atomically before any AI call, so parallel
+  requests get `409 CONVERSATION_BUSY` instead of multiplying model calls.
+- **Per-order cap** on new conversations, and a **global hourly budget** of model calls that fails safe to
+  escalation.
+- **Least privilege:** the APIs connect as a non-superuser role that only owns its own database, and the API
+  containers run as non-root users. The web app ships a Content-Security-Policy.
+
 ## Refund policy
 
 See [`policy/refund-policy.md`](policy/refund-policy.md) for rules R01 to R10, precedence, and flags.
@@ -223,8 +251,11 @@ pnpm test && pnpm lint && pnpm typecheck && pnpm build
 pnpm eval --backend=laravel
 ```
 
+The demo rate limits (60 per minute) allow one contract run per minute per backend. To run it repeatedly, start
+the stack with `RATE_LIMIT_VERIFY_PER_MINUTE=1000 RATE_LIMIT_MESSAGES_PER_MINUTE=1000 RATE_LIMIT_ADMIN_FAILURES_PER_MINUTE=1000 docker compose up -d`, as CI does.
+
 The Laravel and NestJS test suites expect Postgres from `docker compose up -d db` on port 55432, with
-the `refunds_laravel_test` and `refunds_nest_test` databases created by `docker/postgres/init.sql`.
+the `refunds_laravel_test` and `refunds_nest_test` databases created by `docker/postgres/init.sh`.
 
 ## Assumptions and trade-offs
 
