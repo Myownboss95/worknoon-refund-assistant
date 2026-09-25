@@ -12,7 +12,11 @@ export interface ExtractInput {
     readonly orderNumber: string;
     readonly status: OrderStatus;
     readonly daysSinceDelivery: number | null;
-    readonly selectedItems: readonly { readonly name: string; readonly finalSale: boolean }[];
+    readonly selectedItems: readonly {
+      readonly name: string;
+      readonly quantity: number;
+      readonly finalSale: boolean;
+    }[];
   };
 }
 

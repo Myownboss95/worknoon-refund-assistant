@@ -18,6 +18,8 @@ export interface StartConversationInput {
   readonly orderId: string;
   readonly orderNumber: string;
   readonly greeting: string;
+  /** Refuse to start if the order already has this many conversations created since `since`. */
+  readonly cap: { readonly max: number; readonly since: Date };
 }
 
 @Injectable()
@@ -31,9 +33,18 @@ export class ConversationsRepository {
     return this.prisma.conversation.findUnique({ where: { id }, include: CONVERSATION_DETAIL });
   }
 
-  /** Opens a conversation with its greeting and records `conversation.started`, atomically. */
-  async start(input: StartConversationInput): Promise<ConversationDetailRow> {
+  /**
+   * Opens a conversation with its greeting and records `conversation.started`, atomically. Returns
+   * `null` and writes nothing when the order is at its conversation cap. The order row is locked
+   * first so concurrent verifications cannot both pass the cap.
+   */
+  async start(input: StartConversationInput): Promise<ConversationDetailRow | null> {
     const conversationId = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM orders WHERE id = ${input.orderId}::uuid FOR UPDATE`;
+      const recent = await tx.conversation.count({
+        where: { orderId: input.orderId, createdAt: { gte: input.cap.since } },
+      });
+      if (recent >= input.cap.max) return null;
       const createdAt = new Date();
       const conversation = await tx.conversation.create({
         data: {
@@ -57,6 +68,7 @@ export class ConversationsRepository {
       );
       return conversation.id;
     });
+    if (conversationId === null) return null;
     return this.prisma.conversation.findUniqueOrThrow({
       where: { id: conversationId },
       include: CONVERSATION_DETAIL,

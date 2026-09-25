@@ -8,6 +8,8 @@ import { CustomersRepository } from './customers.repository.js';
 import type { VerifyBody } from './verify.schema.js';
 
 export const VERIFICATION_FAILED_MESSAGE = "We couldn't find an order matching those details.";
+export const ORDER_CONVERSATION_CAP_MESSAGE =
+  'Too many attempts for this order. Please try again later.';
 
 @Injectable()
 export class CustomersService {
@@ -35,11 +37,19 @@ export class CustomersService {
         HttpStatus.NOT_FOUND,
       );
     }
-    return this.conversations.start({
+    const started = await this.conversations.start({
       orderId: order.id,
       orderNumber: order.orderNumber,
       customerId: order.customer.id,
       customerName: order.customer.name,
     });
+    if (started === null) {
+      throw new ApiException(
+        'RATE_LIMITED',
+        ORDER_CONVERSATION_CAP_MESSAGE,
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+    return started;
   }
 }

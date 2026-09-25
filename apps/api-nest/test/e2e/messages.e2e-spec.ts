@@ -10,6 +10,7 @@ import {
 } from '../../src/ai/refund-analyzer.js';
 import { ReplyRenderer } from '../../src/common/reply-renderer.js';
 import { AppConfig } from '../../src/config/app-config.js';
+import { Prisma } from '../../src/generated/prisma/client.js';
 import { contracts } from '../support/contracts.js';
 import {
   ADMIN_TOKEN,
@@ -247,6 +248,190 @@ describe('pipeline fallbacks and races (e2e, scripted analyzer)', () => {
       where: { conversationId: slow.conversationId },
     });
     expect(requests).toBe(0);
+    const lock = await t.prisma.conversation.findUniqueOrThrow({
+      where: { id: slow.conversationId },
+    });
+    expect(lock).toMatchObject({ status: 'open', lockedUntil: null });
+  });
+
+  // Mirrors apps/api-laravel/tests/Feature/PipelineFallbacksTest.php ("returns 409 when another
+  // request claims the item while the model is working").
+  it('returns 409 when another request claims the item while the model is working', async () => {
+    const { conversationId, itemIds } = await startAda(t.http);
+    analyzer.compose = async (input) => {
+      // A concurrent request gets the item approved after the facts were read.
+      const item = await t.prisma.orderItem.findFirstOrThrow({
+        where: { sku: ADA.sku },
+        include: { order: true },
+      });
+      await t.prisma.refundRequest.create({
+        data: {
+          conversationId: null,
+          customerId: item.order.customerId,
+          orderId: item.orderId,
+          status: 'approved',
+          decidedBy: 'import',
+          amountCents: 8900,
+          currency: 'USD',
+          decisiveRuleIds: [],
+          flags: [],
+          items: { create: { orderItemId: item.id, amountCents: 8900 } },
+        },
+      });
+      return analyzer.composeWithTemplate(input);
+    };
+
+    const response = await t.http
+      .post(`${API}/conversations/${conversationId}/messages`)
+      .send({ text: DAMAGED, itemIds });
+    expect(response.status).toBe(409);
+    expectError(response.body, 'REFUND_ALREADY_EXISTS');
+    expect(await t.prisma.refundRequest.count({ where: { conversationId: { not: null } } })).toBe(
+      0,
+    );
+    expect(await t.prisma.message.count({ where: { conversationId, role: 'assistant' } })).toBe(1);
+  });
+
+  it('returns 409 CONVERSATION_BUSY while another turn of the same conversation is running', async () => {
+    const { conversationId, itemIds } = await startAda(t.http);
+    const gate = Promise.withResolvers<void>();
+    const reachedCompose = Promise.withResolvers<void>();
+    analyzer.compose = async (input) => {
+      reachedCompose.resolve();
+      await gate.promise;
+      return analyzer.composeWithTemplate(input);
+    };
+
+    const first = t.http
+      .post(`${API}/conversations/${conversationId}/messages`)
+      .send({ text: DAMAGED, itemIds })
+      .then((response) => response);
+    await reachedCompose.promise;
+
+    const busy = await t.http
+      .post(`${API}/conversations/${conversationId}/messages`)
+      .send({ text: 'Any update?', itemIds });
+    expect(busy.status).toBe(409);
+    expect(ErrorResponseSchema.parse(busy.body).error).toEqual({
+      code: 'CONVERSATION_BUSY',
+      message: "We're still working on your previous message.",
+    });
+    // The busy turn stored nothing.
+    expect(await t.prisma.message.count({ where: { conversationId, role: 'customer' } })).toBe(1);
+
+    gate.resolve();
+    expect((await first).status).toBe(200);
+    const closed = await t.prisma.conversation.findUniqueOrThrow({ where: { id: conversationId } });
+    expect(closed).toMatchObject({ status: 'closed', lockedUntil: null });
+  });
+
+  it('still validates and reports a closed conversation before checking the lock', async () => {
+    const { conversationId, itemIds } = await startAda(t.http);
+    await t.prisma.conversation.update({
+      where: { id: conversationId },
+      data: { lockedUntil: new Date(Date.now() + 60_000) },
+    });
+    const invalid = await t.http
+      .post(`${API}/conversations/${conversationId}/messages`)
+      .send({ text: '', itemIds });
+    expect(invalid.status).toBe(422);
+    const busy = await t.http
+      .post(`${API}/conversations/${conversationId}/messages`)
+      .send({ text: DAMAGED, itemIds });
+    expect(busy.status).toBe(409);
+    expectError(busy.body, 'CONVERSATION_BUSY');
+    await t.prisma.conversation.update({
+      where: { id: conversationId },
+      data: { status: 'closed' },
+    });
+    const closed = await t.http
+      .post(`${API}/conversations/${conversationId}/messages`)
+      .send({ text: DAMAGED, itemIds });
+    expectError(closed.body, 'CONVERSATION_CLOSED');
+  });
+
+  it('reclaims an expired lock left by a crashed worker', async () => {
+    const { conversationId, itemIds } = await startAda(t.http);
+    await t.prisma.conversation.update({
+      where: { id: conversationId },
+      data: { lockedUntil: new Date(Date.now() - 1_000) },
+    });
+    const response = await sendMessage(t.http, conversationId, DAMAGED, itemIds);
+    expect(response.decision?.status).toBe('approved');
+  });
+
+  it('releases the lock after a turn that leaves the conversation open', async () => {
+    const { conversationId, itemIds } = await startAda(t.http);
+    const response = await sendMessage(t.http, conversationId, 'hmm', itemIds);
+    expect(response.decision).toBeNull();
+    const row = await t.prisma.conversation.findUniqueOrThrow({ where: { id: conversationId } });
+    expect(row).toMatchObject({ status: 'open', lockedUntil: null });
+  });
+});
+
+describe('one refund request per conversation (e2e)', () => {
+  let t: TestApp;
+
+  beforeAll(async () => {
+    t = await createTestApp();
+  });
+
+  afterAll(async () => {
+    await t.close();
+  });
+
+  beforeEach(async () => {
+    await resetDemo(t.http);
+  });
+
+  const refundFor = (conversationId: string | null, customerId: string, orderId: string) =>
+    t.prisma.refundRequest.create({
+      data: {
+        conversationId,
+        customerId,
+        orderId,
+        status: 'denied',
+        decidedBy: 'policy',
+        amountCents: 0,
+        currency: 'USD',
+        decisiveRuleIds: [],
+        flags: [],
+      },
+    });
+
+  it('rejects a second refund request for the same conversation; nulls are allowed', async () => {
+    const { conversationId } = await startAda(t.http);
+    const conversation = await t.prisma.conversation.findUniqueOrThrow({
+      where: { id: conversationId },
+    });
+    await refundFor(conversationId, conversation.customerId, conversation.orderId);
+    const duplicate: unknown = await refundFor(
+      conversationId,
+      conversation.customerId,
+      conversation.orderId,
+    ).catch((error: unknown) => error);
+    expect(duplicate).toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
+    expect(duplicate).toMatchObject({ code: 'P2002' });
+
+    await refundFor(null, conversation.customerId, conversation.orderId);
+    await refundFor(null, conversation.customerId, conversation.orderId);
+  });
+
+  it('maps a unique violation on persist to 409 REFUND_ALREADY_EXISTS', async () => {
+    const { conversationId, itemIds } = await startAda(t.http);
+    const conversation = await t.prisma.conversation.findUniqueOrThrow({
+      where: { id: conversationId },
+    });
+    // A request already recorded for this still-open conversation (no items, so nothing is claimed).
+    await refundFor(conversationId, conversation.customerId, conversation.orderId);
+    const response = await t.http
+      .post(`${API}/conversations/${conversationId}/messages`)
+      .send({ text: DAMAGED, itemIds });
+    expect(response.status).toBe(409);
+    expectError(response.body, 'REFUND_ALREADY_EXISTS');
+    expect(await t.prisma.refundRequest.count({ where: { conversationId } })).toBe(1);
+    const row = await t.prisma.conversation.findUniqueOrThrow({ where: { id: conversationId } });
+    expect(row).toMatchObject({ status: 'open', lockedUntil: null });
   });
 });
 

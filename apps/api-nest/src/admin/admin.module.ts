@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { AdminAuthLimiter } from '../common/admin-auth-limiter.js';
 import { AdminTokenGuard } from '../common/admin-token.guard.js';
 import { AdminController } from './admin.controller.js';
 import { AdminRepository } from './admin.repository.js';
@@ -7,6 +8,6 @@ import { DemoDataRepository } from './demo-data.repository.js';
 
 @Module({
   controllers: [AdminController],
-  providers: [AdminRepository, AdminService, DemoDataRepository, AdminTokenGuard],
+  providers: [AdminRepository, AdminService, DemoDataRepository, AdminAuthLimiter, AdminTokenGuard],
 })
 export class AdminModule {}

@@ -56,6 +56,11 @@ class PersistConflict extends Error {
 }
 
 const LockedConversationSchema = z.array(z.object({ status: z.string() }));
+const TurnClaimSchema = z.array(z.object({ lockedUntil: z.date() }));
+
+export type TurnClaim =
+  | { readonly ok: true; readonly lockedUntil: Date }
+  | { readonly ok: false; readonly reason: 'conversation_closed' | 'busy' };
 const CLAIMING_STATUSES = ['approved', 'escalated'] as const satisfies readonly RefundStatus[];
 
 /** Reads and writes for the refund pipeline: conversations, messages, refund requests. */
@@ -70,6 +75,40 @@ export class RefundsRepository {
     return this.prisma.conversation.findUnique({
       where: { id },
       include: CONVERSATION_FOR_MESSAGE,
+    });
+  }
+
+  /**
+   * Claims the conversation for one message turn (docs/pipeline.md, "one turn at a time"): a single
+   * conditional UPDATE, so of two concurrent turns exactly one wins. The 90 s expiry covers workers
+   * that crash mid-turn: an expired lock is simply reclaimed.
+   */
+  async claimTurn(conversationId: string): Promise<TurnClaim> {
+    const rows = TurnClaimSchema.parse(
+      await this.prisma.$queryRaw`
+        UPDATE conversations
+        SET locked_until = now() + interval '90 seconds', updated_at = now()
+        WHERE id = ${conversationId}::uuid AND status = 'open'
+          AND (locked_until IS NULL OR locked_until < now())
+        RETURNING locked_until AS "lockedUntil"`,
+    );
+    const claimed = rows[0];
+    if (claimed !== undefined) return { ok: true, lockedUntil: claimed.lockedUntil };
+    const current = await this.prisma.conversation.findUnique({
+      where: { id: conversationId },
+      select: { status: true },
+    });
+    return {
+      ok: false,
+      reason: current === null || current.status === 'closed' ? 'conversation_closed' : 'busy',
+    };
+  }
+
+  /** Ends the turn. Only clears this turn's own lock, in case it outlived the expiry and was re-claimed. */
+  async releaseTurn(conversationId: string, lockedUntil: Date): Promise<void> {
+    await this.prisma.conversation.updateMany({
+      where: { id: conversationId, lockedUntil },
+      data: { lockedUntil: null },
     });
   }
 

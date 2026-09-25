@@ -3,6 +3,8 @@ import type { ConversationDetail, VerifyResponse } from '@worknoon/contracts';
 import { ApiException } from '../common/api-exception.js';
 import { firstName } from '../common/formatting.js';
 import { ReplyRenderer } from '../common/reply-renderer.js';
+import { daysAgo } from '../common/time.js';
+import { AppConfig } from '../config/app-config.js';
 import { CONTRACTS } from '../config/tokens.js';
 import type { Contracts } from '../config/contracts.loader.js';
 import { RefundsRepository } from '../refunds/refunds.repository.js';
@@ -29,16 +31,22 @@ export class ConversationsService {
     private readonly refunds: RefundsRepository,
     private readonly renderer: ReplyRenderer,
     @Inject(CONTRACTS) private readonly contracts: Contracts,
+    private readonly config: AppConfig,
   ) {}
 
-  /** Starts a conversation for a verified order and greets the customer. */
-  async start(order: VerifiedOrder): Promise<VerifyResponse> {
+  /**
+   * Starts a conversation for a verified order and greets the customer. `null` (nothing created)
+   * when the order already has MAX_CONVERSATIONS_PER_ORDER_PER_DAY conversations in the last 24 h.
+   */
+  async start(order: VerifiedOrder, now: Date = new Date()): Promise<VerifyResponse | null> {
     const row = await this.conversations.start({
       customerId: order.customerId,
       orderId: order.orderId,
       orderNumber: order.orderNumber,
       greeting: this.renderer.greeting(firstName(order.customerName), order.orderNumber),
+      cap: { max: this.config.maxConversationsPerOrderPerDay, since: daysAgo(now, 1) },
     });
+    if (row === null) return null;
     const { decision: _decision, ...response } = await this.present(row);
     return response;
   }

@@ -5,6 +5,7 @@ import {
   PolicySchema,
 } from '@worknoon/contracts';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { AppConfig } from '../../src/config/app-config.js';
 import { API, createTestApp, resetDemo, verify, type TestApp } from './support/test-app.js';
 
 describe('customer endpoints (e2e)', () => {
@@ -196,5 +197,52 @@ describe('customer endpoints (e2e)', () => {
       expect(response.headers['x-content-type-options']).toBe('nosniff');
       expect(response.headers['access-control-allow-origin']).toBe('http://localhost:8080');
     });
+  });
+});
+
+class TwoConversationsPerOrderConfig extends AppConfig {
+  override readonly maxConversationsPerOrderPerDay = 2;
+}
+
+describe('per-order conversation cap (e2e)', () => {
+  let t: TestApp;
+
+  beforeAll(async () => {
+    t = await createTestApp((builder) =>
+      builder.overrideProvider(AppConfig).useClass(TwoConversationsPerOrderConfig),
+    );
+    await resetDemo(t.http);
+  });
+
+  afterAll(async () => {
+    await t.close();
+  });
+
+  it('returns 429 and creates nothing once the order has the maximum in the last 24 h', async () => {
+    const first = await verify(t.http, 'ada.okafor@example.com', 'WN-1001');
+    await verify(t.http, 'ada.okafor@example.com', 'WN-1001');
+    const [conversationsBefore, eventsBefore] = await Promise.all([
+      t.prisma.conversation.count(),
+      t.prisma.auditEvent.count(),
+    ]);
+
+    const limited = await t.http
+      .post(`${API}/customers/verify`)
+      .send({ email: 'ada.okafor@example.com', orderNumber: 'WN-1001' });
+    expect(limited.status).toBe(429);
+    expect(ErrorResponseSchema.parse(limited.body).error).toEqual({
+      code: 'RATE_LIMITED',
+      message: 'Too many attempts for this order. Please try again later.',
+    });
+    expect(await t.prisma.conversation.count()).toBe(conversationsBefore);
+    expect(await t.prisma.auditEvent.count()).toBe(eventsBefore);
+
+    // Other orders are unaffected; a conversation older than 24 h no longer counts.
+    await verify(t.http, 'ben.carter@example.com', 'WN-1002');
+    await t.prisma.conversation.update({
+      where: { id: first.conversation.id },
+      data: { createdAt: new Date(Date.now() - 25 * 3_600_000) },
+    });
+    await verify(t.http, 'ada.okafor@example.com', 'WN-1001');
   });
 });

@@ -3,6 +3,7 @@ import { AppConfig } from '../config/app-config.js';
 import { CONTRACTS } from '../config/tokens.js';
 import type { Contracts } from '../config/contracts.loader.js';
 import { ReplyRenderer } from '../common/reply-renderer.js';
+import { AiCallBudget } from './ai-call-budget.js';
 import { AiCallRunner } from './ai-call-runner.js';
 import { ClaudeRefundAnalyzer } from './claude-refund-analyzer.js';
 import { InjectionDetector } from './guards/injection-detector.js';
@@ -24,7 +25,11 @@ import { REFUND_ANALYZER, type RefundAnalyzer } from './refund-analyzer.js';
       ): RefundAnalyzer => {
         const { provider, apiKey, model } = config.llm;
         if (provider === 'anthropic' && apiKey !== undefined) {
-          return new ClaudeRefundAnalyzer({ apiKey, model }, loadSystemPrompts(contracts.path));
+          return new ClaudeRefundAnalyzer(
+            { apiKey, model },
+            loadSystemPrompts(contracts.path),
+            new AiCallBudget(config.llmMaxCallsPerHour),
+          );
         }
         return new MockRefundAnalyzer(contracts.mockFixtures, renderer);
       },

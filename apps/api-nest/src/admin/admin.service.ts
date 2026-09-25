@@ -9,6 +9,7 @@ import type {
 } from '@worknoon/contracts';
 import { ApiException } from '../common/api-exception.js';
 import { ReplyRenderer } from '../common/reply-renderer.js';
+import { AppConfig } from '../config/app-config.js';
 import { AdminRepository } from './admin.repository.js';
 import { DemoDataRepository } from './demo-data.repository.js';
 import { toRefundRequestDetail, toRefundRequestSummary } from './refund-request.presenter.js';
@@ -24,6 +25,7 @@ export class AdminService {
     private readonly admin: AdminRepository,
     private readonly demoData: DemoDataRepository,
     private readonly renderer: ReplyRenderer,
+    private readonly config: AppConfig,
   ) {}
 
   async list(query: RefundListQuery): Promise<RefundRequestList> {
@@ -83,7 +85,9 @@ export class AdminService {
     };
   }
 
+  /** Only in DEMO_MODE; otherwise the route does not exist (checked after the admin token). */
   async reset(): Promise<ResetResponse> {
+    if (!this.config.demoMode) throw ApiException.notFound();
     const summary = await this.demoData.reset();
     return { reset: true, customers: summary.customers, orders: summary.orders };
   }

@@ -5,6 +5,7 @@ import Anthropic, {
   APIUserAbortError,
 } from '@anthropic-ai/sdk';
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
+import type { AiCallBudget } from './ai-call-budget.js';
 import { ExtractionOutputSchema, type ExtractionOutput } from './extraction-output.schema.js';
 import type { SystemPrompts } from './prompts/prompts.js';
 import { buildComposeUserContent, buildExtractUserContent } from './prompts/user-content.js';
@@ -21,15 +22,17 @@ export const AI_CALL_TIMEOUT_MS = 20_000;
 const EXTRACT_MAX_TOKENS = 1024;
 const COMPOSE_MAX_TOKENS = 400;
 const EXTRACTION_FORMAT = zodOutputFormat(ExtractionOutputSchema);
+export const EXTRACT_TEMPERATURE = 0;
+export const COMPOSE_TEMPERATURE = 0.3;
 
 /**
  * Models released after Claude Opus 4.6 reject any temperature other than 1.0 (see the SDK's
- * deprecation note), so `temperature: 0` is only sent to the model families that still accept it.
+ * deprecation note), so a temperature is only sent to the model families that still accept it.
  */
 const ACCEPTS_TEMPERATURE = /^claude-(3|(haiku|sonnet|opus)-4-[0-6](-|$))/;
 
-export function temperatureFor(model: string): { temperature?: number } {
-  return ACCEPTS_TEMPERATURE.test(model) ? { temperature: 0 } : {};
+export function temperatureFor(model: string, temperature: number): { temperature?: number } {
+  return ACCEPTS_TEMPERATURE.test(model) ? { temperature } : {};
 }
 
 export interface ClaudeSettings {
@@ -55,7 +58,9 @@ function toAnalyzerError(error: unknown): AnalyzerError {
 
 /**
  * Claude via the Anthropic SDK. The SDK does not retry (maxRetries 0): the pipeline retries once
- * itself so that every attempt is visible in the decision trace.
+ * itself so that every attempt is visible in the decision trace. Every attempt draws on the hourly
+ * call budget first; when it is spent the attempt fails as `provider_error` without calling Claude,
+ * so the pipeline takes its normal fail-safe path.
  */
 export class ClaudeRefundAnalyzer implements RefundAnalyzer {
   readonly provider = 'anthropic' as const;
@@ -65,6 +70,7 @@ export class ClaudeRefundAnalyzer implements RefundAnalyzer {
   constructor(
     settings: ClaudeSettings,
     private readonly prompts: SystemPrompts,
+    private readonly budget: AiCallBudget,
     client?: Anthropic,
   ) {
     this.model = settings.model;
@@ -75,10 +81,11 @@ export class ClaudeRefundAnalyzer implements RefundAnalyzer {
 
   async extract(input: ExtractInput): Promise<AnalyzerResult<ExtractionOutput>> {
     try {
+      this.spendBudget();
       const message = await this.client.messages.parse({
         model: this.model,
         max_tokens: EXTRACT_MAX_TOKENS,
-        ...temperatureFor(this.model),
+        ...temperatureFor(this.model, EXTRACT_TEMPERATURE),
         system: this.prompts.extract,
         messages: [{ role: 'user', content: buildExtractUserContent(input) }],
         output_config: { format: EXTRACTION_FORMAT },
@@ -93,9 +100,11 @@ export class ClaudeRefundAnalyzer implements RefundAnalyzer {
 
   async compose(input: ComposeInput): Promise<AnalyzerResult<string>> {
     try {
+      this.spendBudget();
       const message = await this.client.messages.create({
         model: this.model,
         max_tokens: COMPOSE_MAX_TOKENS,
+        ...temperatureFor(this.model, COMPOSE_TEMPERATURE),
         system: this.prompts.compose,
         messages: [{ role: 'user', content: buildComposeUserContent(input) }],
       });
@@ -111,5 +120,9 @@ export class ClaudeRefundAnalyzer implements RefundAnalyzer {
     } catch (error) {
       throw toAnalyzerError(error);
     }
+  }
+
+  private spendBudget(): void {
+    if (!this.budget.tryAcquire()) throw new AnalyzerError('provider_error');
   }
 }

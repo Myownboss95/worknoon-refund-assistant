@@ -122,6 +122,8 @@ model Conversation {
   orderId            String             @map("order_id") @db.Uuid
   status             ConversationStatus @default(open)
   clarificationTurns Int                @default(0) @map("clarification_turns")
+  /// Set while a message turn is being processed (docs/pipeline.md, "one turn at a time").
+  lockedUntil        DateTime?          @map("locked_until") @db.Timestamptz(3)
   createdAt          DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt          DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -152,7 +154,8 @@ model Message {
 
 model RefundRequest {
   id              String          @id @default(uuid()) @db.Uuid
-  conversationId  String?         @map("conversation_id") @db.Uuid
+  /// Unique: one decision per conversation. Null for imported history.
+  conversationId  String?         @unique @map("conversation_id") @db.Uuid
   customerId      String          @map("customer_id") @db.Uuid
   orderId         String          @map("order_id") @db.Uuid
   status          RefundStatus
@@ -177,7 +180,6 @@ model RefundRequest {
   auditEvents  AuditEvent[]
 
   @@index([customerId, status, createdAt])
-  @@index([conversationId])
   @@index([status, createdAt])
   @@map("refund_requests")
 }

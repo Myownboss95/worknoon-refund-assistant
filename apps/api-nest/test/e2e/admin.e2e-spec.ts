@@ -8,6 +8,7 @@ import {
   type RefundStatus,
 } from '@worknoon/contracts';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { AppConfig } from '../../src/config/app-config.js';
 import { contracts } from '../support/contracts.js';
 import {
   ADMIN_TOKEN,
@@ -116,9 +117,13 @@ describe('admin endpoints (e2e)', () => {
         (await admin('get', '/refund-requests?page=9').expect(200)).body,
       );
       expect(beyond.data).toEqual([]);
+      const last = RefundRequestListSchema.parse(
+        (await admin('get', '/refund-requests?page=10000').expect(200)).body,
+      );
+      expect(last.meta.page).toBe(10_000);
     });
 
-    it.each(['status=pending', 'page=0', 'perPage=101', 'page=abc'])(
+    it.each(['status=pending', 'page=0', 'page=10001', 'perPage=101', 'page=abc'])(
       'rejects %s with 422',
       async (query) => {
         const response = await admin('get', `/refund-requests?${query}`);
@@ -331,5 +336,105 @@ describe('admin endpoints (e2e)', () => {
       expect(await t.prisma.refundRequest.count({ where: { decidedBy: 'import' } })).toBe(5);
       expect(await t.prisma.auditEvent.count()).toBe(0);
     });
+  });
+});
+
+class ProductionLikeConfig extends AppConfig {
+  override readonly demoMode = false;
+}
+
+class StrictAdminFailuresConfig extends AppConfig {
+  override readonly rateLimitAdminFailuresPerMinute = 3;
+}
+
+const expectCode = (body: unknown, code: string): void => {
+  expect(ErrorResponseSchema.parse(body).error.code).toBe(code);
+};
+
+describe('admin hardening with DEMO_MODE off (e2e)', () => {
+  let t: TestApp;
+
+  beforeAll(async () => {
+    t = await createTestApp((builder) =>
+      builder.overrideProvider(AppConfig).useClass(ProductionLikeConfig),
+    );
+  });
+
+  afterAll(async () => {
+    await t.close();
+  });
+
+  it('answers POST /admin/demo/reset with 404 after the token check, and resets nothing', async () => {
+    const before = await t.prisma.customer.count();
+    const unauthenticated = await t.http.post(`${API}/admin/demo/reset`);
+    expect(unauthenticated.status).toBe(401);
+    const response = await t.http.post(`${API}/admin/demo/reset`).set('X-Admin-Token', ADMIN_TOKEN);
+    expect(response.status).toBe(404);
+    expectCode(response.body, 'NOT_FOUND');
+    expect(await t.prisma.customer.count()).toBe(before);
+  });
+});
+
+describe('admin failed-token limit (e2e)', () => {
+  let t: TestApp;
+
+  beforeAll(async () => {
+    t = await createTestApp((builder) =>
+      builder.overrideProvider(AppConfig).useClass(StrictAdminFailuresConfig),
+    );
+  });
+
+  afterAll(async () => {
+    await t.close();
+  });
+
+  it('rate-limits every admin route for an IP after too many failed tokens', async () => {
+    // Successful requests do not count.
+    await t.http.get(`${API}/admin/stats`).set('X-Admin-Token', ADMIN_TOKEN).expect(200);
+    for (const token of [undefined, 'wrong-1', 'wrong-2']) {
+      const call = t.http.get(`${API}/admin/stats`);
+      const response = await (token === undefined ? call : call.set('X-Admin-Token', token));
+      expect(response.status).toBe(401);
+    }
+    // Now even the right token is refused, on any admin route, and a spoofed X-Forwarded-For
+    // does not help because no proxy is trusted by default.
+    for (const path of ['/stats', '/refund-requests', '/demo/reset']) {
+      const method = path === '/demo/reset' ? 'post' : 'get';
+      const response = await t.http[method](`${API}/admin${path}`)
+        .set('X-Admin-Token', ADMIN_TOKEN)
+        .set('X-Forwarded-For', '203.0.113.7');
+      expect(response.status).toBe(429);
+      expectCode(response.body, 'RATE_LIMITED');
+    }
+    // Non-admin routes are unaffected.
+    await t.http.get(`${API}/health`).expect(200);
+  });
+});
+
+class TrustedLoopbackConfig extends AppConfig {
+  override readonly trustedProxies = ['127.0.0.1', '::1', '::ffff:127.0.0.1'];
+  override readonly rateLimitAdminFailuresPerMinute = 1;
+}
+
+describe('admin failure limit behind a trusted proxy (e2e)', () => {
+  let t: TestApp;
+
+  beforeAll(async () => {
+    t = await createTestApp((builder) =>
+      builder.overrideProvider(AppConfig).useClass(TrustedLoopbackConfig),
+    );
+  });
+
+  afterAll(async () => {
+    await t.close();
+  });
+
+  const asClient = (ip: string, token: string) =>
+    t.http.get(`${API}/admin/stats`).set('X-Forwarded-For', ip).set('X-Admin-Token', token);
+
+  it('keys failures on the X-Forwarded-For client of a trusted proxy', async () => {
+    expect((await asClient('203.0.113.7', 'wrong')).status).toBe(401);
+    expect((await asClient('203.0.113.7', ADMIN_TOKEN)).status).toBe(429);
+    expect((await asClient('203.0.113.8', ADMIN_TOKEN)).status).toBe(200);
   });
 });

@@ -41,6 +41,7 @@ const DEFAULT_MESSAGES: Record<ErrorCode, string> = {
   VERIFICATION_FAILED: "We couldn't find an order matching those details.",
   NOT_FOUND: 'Not found.',
   CONVERSATION_CLOSED: 'This conversation is closed.',
+  CONVERSATION_BUSY: "We're still working on your previous message.",
   REFUND_ALREADY_EXISTS: 'A refund request already covers one of these items.',
   REFUND_NOT_REVIEWABLE: 'Only escalated refund requests can be reviewed.',
   ADMIN_UNAUTHORIZED: 'A valid admin token is required.',

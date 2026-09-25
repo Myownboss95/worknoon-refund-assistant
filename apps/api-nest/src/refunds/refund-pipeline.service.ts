@@ -74,6 +74,33 @@ export class RefundPipelineService {
     const body = this.parseBody(rawBody);
     const selectedItems = this.selectItems(conversation, body.itemIds);
 
+    // One turn at a time: claim the conversation before storing anything or calling the AI.
+    const claim = await this.refunds.claimTurn(conversation.id);
+    if (!claim.ok) {
+      throw claim.reason === 'conversation_closed'
+        ? this.conversationClosed()
+        : ApiException.conflict(
+            'CONVERSATION_BUSY',
+            "We're still working on your previous message.",
+          );
+    }
+    try {
+      // Re-read under the lock: a turn that finished between the first read and the claim may have
+      // added messages or bumped the clarification counter.
+      const current = await this.refunds.findConversationForMessage(conversation.id);
+      if (current === null || current.status === 'closed') throw this.conversationClosed();
+      return await this.runTurn(current, body, selectedItems);
+    } finally {
+      await this.refunds.releaseTurn(conversation.id, claim.lockedUntil);
+    }
+  }
+
+  /** Steps 3-11, run while this request holds the conversation's turn lock. */
+  private async runTurn(
+    conversation: ConversationForMessage,
+    body: SendMessageBody,
+    selectedItems: OrderItem[],
+  ): Promise<SendMessageResponse> {
     // 3. Store the customer message.
     const customerMessage = await this.refunds.storeCustomerMessage(
       conversation.id,
@@ -266,6 +293,7 @@ export class RefundPipelineService {
           daysSinceDelivery,
           selectedItems: selectedItems.map((item) => ({
             name: item.name,
+            quantity: item.quantity,
             finalSale: item.finalSale,
           })),
         },

@@ -7,8 +7,9 @@ import { AppConfig } from './config/app-config.js';
 /** HTTP concerns shared by main.ts and the e2e tests, so tests exercise the real configuration. */
 export function configureApp(app: NestExpressApplication): NestExpressApplication {
   const config = app.get(AppConfig);
-  // Behind the web nginx proxy and Docker networking; trust private hops for the client IP.
-  app.set('trust proxy', 'loopback, linklocal, uniquelocal');
+  // Only TRUSTED_PROXIES (the web nginx in Compose) may set X-Forwarded-For; by default nothing is
+  // trusted and req.ip, which every rate limit keys on, is the socket address.
+  app.set('trust proxy', config.trustedProxies.length > 0 ? [...config.trustedProxies] : false);
   app.use(requestIdMiddleware);
   app.use(helmet());
   app.enableCors({
