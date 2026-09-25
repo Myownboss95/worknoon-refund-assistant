@@ -7,6 +7,7 @@ export const errorMessages: Record<ClientErrorCode, string> = {
   NOT_FOUND: "We couldn't find what you were looking for. It may have been removed or reset.",
   CONVERSATION_CLOSED:
     'This conversation has already been resolved. Start over to make a new request.',
+  CONVERSATION_BUSY: 'Still working on your previous message — give it a moment.',
   REFUND_ALREADY_EXISTS:
     'A refund for one of these items has already been issued or is being reviewed.',
   REFUND_NOT_REVIEWABLE: 'This request has already been reviewed, so it can no longer be changed.',

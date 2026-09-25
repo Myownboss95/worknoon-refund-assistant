@@ -7,6 +7,11 @@ function isExternal(href: string | undefined): boolean {
   return Boolean(href && /^https?:\/\//.test(href));
 }
 
+/** The CSP only allows same-origin and data: images, so anything else is shown as its alt text. */
+function isAllowedImage(src: unknown): src is string {
+  return typeof src === 'string' && (/^\/(?!\/)/.test(src) || src.startsWith('data:image/'));
+}
+
 const components: Components = {
   h1: ({ node: _node, children, ...props }) => (
     <h2 className="mb-4 text-2xl font-semibold tracking-tight" {...props}>
@@ -81,6 +86,12 @@ const components: Components = {
     <td className="border-b px-3 py-2 align-top [tr:last-child_&]:border-b-0" {...props} />
   ),
   hr: ({ node: _node, ...props }) => <hr className="my-8" {...props} />,
+  img: ({ node: _node, src, alt, ...props }) =>
+    isAllowedImage(src) ? (
+      <img src={src} alt={alt ?? ''} className="my-4 max-w-full rounded-lg" {...props} />
+    ) : (
+      <span className="text-muted-foreground italic">{alt}</span>
+    ),
 };
 
 export function PolicyMarkdown({

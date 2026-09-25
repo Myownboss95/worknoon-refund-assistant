@@ -1,6 +1,7 @@
 import { AlertTriangle, RotateCcw } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
+import { isApiError } from '@/shared/api/ApiError';
 import { getErrorMessage } from '@/shared/lib/errorMessages';
 import { Button } from '@/shared/ui/button';
 import { Card } from '@/shared/ui/card';
@@ -18,15 +19,37 @@ export interface ConversationViewProps {
   /** The demo scenario matching this order, if any; powers the "Use sample message" chip. */
   scenario: DemoScenario | null;
   onStartOver: () => void;
+  /** Called when the server no longer knows this conversation (e.g. a stale id after a demo reset). */
+  onNotFound?: () => void;
 }
 
-export function ConversationView({ conversationId, scenario, onStartOver }: ConversationViewProps) {
+export function ConversationView({
+  conversationId,
+  scenario,
+  onStartOver,
+  onNotFound,
+}: ConversationViewProps) {
   const conversation = useConversation(conversationId);
   const send = useSendMessage(conversationId);
   const [text, setText] = useState('');
   const [selectedItemIds, setSelectedItemIds] = useState<string[]>([]);
+  // Guards against a second submit landing before the pending state re-renders the composer.
+  const sendingRef = useRef(false);
+
+  const notFound = isApiError(conversation.error) && conversation.error.status === 404;
+  const notFoundHandledRef = useRef(false);
+  useEffect(() => {
+    if (!notFound || !onNotFound || notFoundHandledRef.current) return;
+    notFoundHandledRef.current = true;
+    toast.info('Your previous conversation is no longer available', {
+      description: 'Verify your order to start a new one.',
+    });
+    onNotFound();
+  }, [notFound, onNotFound]);
 
   if (conversation.isPending) return <ConversationSkeleton />;
+
+  if (notFound && onNotFound) return <ConversationSkeleton />;
 
   if (conversation.isError) {
     return (
@@ -79,8 +102,13 @@ export function ConversationView({ conversationId, scenario, onStartOver }: Conv
   }
 
   function handleSend() {
+    if (sendingRef.current || send.isPending) return;
+    sendingRef.current = true;
     const payload = { text: text.trim(), itemIds: effectiveSelection };
     send.mutate(payload, {
+      onSettled: () => {
+        sendingRef.current = false;
+      },
       onSuccess: (response) => {
         setText('');
         if (response.decision === null) {

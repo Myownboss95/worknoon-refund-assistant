@@ -52,20 +52,15 @@ export function TokenGate() {
                 id={`${id}-token`}
                 type="password"
                 autoComplete="off"
-                placeholder="demo-admin"
+                placeholder="Admin token"
                 value={value}
                 onChange={(event) => setValue(event.target.value)}
                 aria-invalid={error ? true : undefined}
-                aria-describedby={error ? `${id}-error` : `${id}-hint`}
+                aria-describedby={error ? `${id}-error` : undefined}
               />
-              {error ? (
+              {error && (
                 <p id={`${id}-error`} className="text-sm text-danger-strong">
                   {error}
-                </p>
-              ) : (
-                <p id={`${id}-hint`} className="text-xs text-muted-foreground">
-                  The local demo uses <span className="font-mono">demo-admin</span> unless
-                  ADMIN_TOKEN is set.
                 </p>
               )}
             </div>

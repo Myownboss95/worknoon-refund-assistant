@@ -1,4 +1,5 @@
 import { toast } from 'sonner';
+import { clearStoredConversations } from '@/features/chat/conversationStorage';
 import { SegmentedControl, SegmentedControlItem } from '@/shared/ui/toggle-group';
 import { BACKENDS, isBackend, useBackend } from '../BackendContext';
 
@@ -18,6 +19,7 @@ export function BackendSwitcher() {
         onValueChange={(value) => {
           // Radix emits '' when the active item is pressed again; ignore that.
           if (!isBackend(value) || value === backend) return;
+          clearStoredConversations();
           setBackend(value);
           toast.info(`Switched to the ${BACKENDS[value].label} backend`, {
             description: 'The conversation was reset and data reloaded.',

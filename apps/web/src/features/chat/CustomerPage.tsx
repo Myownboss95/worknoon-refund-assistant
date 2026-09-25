@@ -1,15 +1,26 @@
 import { useState } from 'react';
+import { useBackend } from '@/app/BackendContext';
 import { ConversationView } from './components/ConversationView';
 import { ScenarioPanel } from './components/ScenarioPanel';
 import { VerifyForm } from './components/VerifyForm';
+import { readStoredConversationId, storeConversationId } from './conversationStorage';
 import { useScenarios, type DemoScenario } from './hooks/useScenarios';
 
 export function CustomerPage() {
   const scenarios = useScenarios();
-  const [conversationId, setConversationId] = useState<string | null>(null);
+  const { backend } = useBackend();
+  // Restored from sessionStorage so a refresh reopens the same chat (the page remounts per backend).
+  const [conversationId, setConversationIdState] = useState<string | null>(() =>
+    readStoredConversationId(backend),
+  );
   const [activeScenarioId, setActiveScenarioId] = useState<number | null>(null);
   // Bumped on every scenario pick so the form remounts with the new prefill.
   const [formVersion, setFormVersion] = useState(0);
+
+  function setConversationId(next: string | null) {
+    storeConversationId(backend, next);
+    setConversationIdState(next);
+  }
 
   const activeScenario = scenarios.find((scenario) => scenario.id === activeScenarioId) ?? null;
 
@@ -43,6 +54,7 @@ export function CustomerPage() {
             conversationId={conversationId}
             scenario={activeScenario}
             onStartOver={startOver}
+            onNotFound={startOver}
           />
         ) : (
           <VerifyForm
