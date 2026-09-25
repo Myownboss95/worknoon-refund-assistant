@@ -19,7 +19,7 @@
     },
     {
       "id": "decision_override",
-      "pattern": "\\b(approve|authori[sz]e)\\b.{0,40}\\$\\s?\\d|\\b(decision|status|outcome|amount)\\s*[=:]\\s*\\w+|\\b(set|change|mark)\\b.{0,20}\\b(status|decision|outcome)\\b"
+      "pattern": "\\b(approve|authori[sz]e)\\b.{0,40}\\$\\s?\\d|\\b(decision|status|outcome|amount)\\s*[=:]\\s*(approved?|denied|escalated|refund(ed)?|\\d+)\\b|\\b(set|change|mark)\\b.{0,20}\\b(status|decision|outcome)\\b"
     },
     {
       "id": "new_instructions",

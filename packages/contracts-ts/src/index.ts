@@ -14,6 +14,7 @@ export const ERROR_CODES = [
   'VERIFICATION_FAILED',
   'NOT_FOUND',
   'CONVERSATION_CLOSED',
+  'CONVERSATION_BUSY',
   'REFUND_ALREADY_EXISTS',
   'REFUND_NOT_REVIEWABLE',
   'ADMIN_UNAUTHORIZED',
@@ -140,7 +141,7 @@ export type ReviewRequest = z.infer<typeof ReviewRequestSchema>;
 
 export const RefundListQuerySchema = z.object({
   status: RefundStatusSchema.optional(),
-  page: z.coerce.number().int().min(1).default(1),
+  page: z.coerce.number().int().min(1).max(10_000).default(1),
   perPage: z.coerce.number().int().min(1).max(100).default(20),
 });
 export type RefundListQuery = z.infer<typeof RefundListQuerySchema>;

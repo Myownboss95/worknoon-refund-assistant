@@ -210,3 +210,77 @@ return `404 NOT_FOUND`. Unhandled exceptions return `500 INTERNAL_ERROR` with a 
   is still `unclear` when the clarification limit is reached.
 - **Wrong HTTP method** on a known path returns `404 NOT_FOUND`. Other 4xx conditions without a specific
   code (e.g. malformed JSON) return `422 VALIDATION_FAILED`.
+
+## Hardening (security audit follow-up)
+
+Both backends implement these identically.
+
+### Environment
+
+| Variable | Default in the apps | Default in compose | Meaning |
+|---|---|---|---|
+| `DEMO_MODE` | `false` | `true` | Enables `POST /admin/demo/reset` and allows the well-known demo admin token |
+| `TRUSTED_PROXIES` | empty (trust none) | the nginx container IP `172.28.0.10` | Comma-separated IPs/CIDRs whose `X-Forwarded-For` is honoured. Anything else uses the socket address |
+| `RATE_LIMIT_ADMIN_FAILURES_PER_MINUTE` | `20` | `20` | Failed admin-token attempts allowed per IP per minute |
+| `MAX_CONVERSATIONS_PER_ORDER_PER_DAY` | `20` | `20` | Conversations `POST /customers/verify` may create per order in a rolling 24 h |
+| `LLM_MAX_CALLS_PER_HOUR` | `1000` | `1000` | Global budget of real provider calls (extract + compose attempts) per rolling hour. Not applied to the mock |
+
+### Admin token
+
+- At boot, when `DEMO_MODE` is false **and** the environment is production (`APP_ENV=production` /
+  `NODE_ENV=production`), the app refuses to start unless `ADMIN_TOKEN` is set, is not `demo-admin`, and is at
+  least 32 characters. The error message names the variable but never prints its value.
+- When `DEMO_MODE` is true and the token is weak, log one warning at boot.
+- Compare tokens by hashing both sides (SHA-256) and comparing the digests in constant time, so the token length
+  is not leaked.
+- Failed admin authentication counts against `RATE_LIMIT_ADMIN_FAILURES_PER_MINUTE` per client IP. Once
+  exceeded, every `/admin/*` request from that IP gets `429 RATE_LIMITED` until the window passes (successful
+  requests do not count).
+- `POST /admin/demo/reset` returns `404 NOT_FOUND` (after the admin token check) when `DEMO_MODE` is false.
+
+### Client IP
+
+Rate limiting keys on the client IP resolved with `TRUSTED_PROXIES` only. nginx overwrites
+`X-Forwarded-For` with `$remote_addr` rather than appending, so a client cannot inject its own value.
+
+### Verify
+
+After a successful match, if the order already has `MAX_CONVERSATIONS_PER_ORDER_PER_DAY` conversations created
+in the last 24 h, return `429 RATE_LIMITED` (message: `Too many attempts for this order. Please try again later.`)
+and create nothing.
+
+### Messages: one turn at a time per conversation
+
+`conversations` gains `locked_until timestamptz null`. After the conversation is loaded and the closed check
+passes, and after request validation, claim it atomically:
+
+```sql
+UPDATE conversations SET locked_until = now() + interval '90 seconds', updated_at = now()
+WHERE id = :id AND status = 'open' AND (locked_until IS NULL OR locked_until < now())
+```
+
+If no row is updated, re-read it: closed → `409 CONVERSATION_CLOSED`; otherwise
+`409 CONVERSATION_BUSY` (message: `We're still working on your previous message.`). The claim happens **before**
+the customer message is stored and before any AI call, and is released (`locked_until = null`) when the turn
+ends, whether it succeeds or throws. The 90 s expiry covers crashed workers.
+
+### AI budget
+
+Before each real provider call (every attempt, extract and compose), increment a counter for the current
+rolling hour. If it would exceed `LLM_MAX_CALLS_PER_HOUR`, do not call the provider: treat the attempt as failed
+with error `provider_error`, which leads to the normal fail-safe path (escalate with `AI_UNAVAILABLE` for extract,
+template with `COMPOSE_UNAVAILABLE` for compose). Log a warning once per hour when the budget is hit.
+
+### Prompt delimiters
+
+Customer text placed inside `<customer_message>` is escaped: `&` → `&amp;`, `<` → `&lt;`, `>` → `&gt;` (in that
+order). This replaces tag stripping; it makes delimiter break-out impossible regardless of nesting or spacing.
+The heuristic detector still runs on the raw text.
+
+### Parity details
+
+- Selected item names (for replies and prompts) are ordered by `sku`, then `id`, like everywhere else.
+- The order context sent to the model includes each selected item's `name`, `quantity` and `finalSale`.
+- Compose uses temperature 0.3; extract uses 0. Send temperature only to models that accept it.
+- `refund_requests.conversation_id` is unique (nulls allowed for imported history) in both schemas.
+- Admin list `page` is capped at 10000.
