@@ -1,0 +1,98 @@
+name: worknoon-refund-assistant
+
+x-api-env: &api-env
+  LLM_PROVIDER: ${LLM_PROVIDER:-mock}
+  LLM_MODEL: ${LLM_MODEL:-claude-haiku-4-5}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  ADMIN_TOKEN: ${ADMIN_TOKEN:-demo-admin}
+  CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:8080}
+  RATE_LIMIT_VERIFY_PER_MINUTE: ${RATE_LIMIT_VERIFY_PER_MINUTE:-300}
+  RATE_LIMIT_MESSAGES_PER_MINUTE: ${RATE_LIMIT_MESSAGES_PER_MINUTE:-300}
+  CONTRACTS_PATH: /srv/contracts
+  POLICY_DOC_PATH: /srv/policy/refund-policy.md
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: refunds
+      POSTGRES_PASSWORD: refunds
+      POSTGRES_DB: refunds_laravel
+    volumes:
+      - db-data:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "${DB_HOST_PORT:-55432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U refunds -d refunds_laravel && psql -U refunds -d refunds_nest -c 'select 1' >/dev/null"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  api-laravel:
+    build:
+      context: .
+      dockerfile: apps/api-laravel/Dockerfile
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      <<: *api-env
+      APP_ENV: production
+      APP_DEBUG: "false"
+      APP_KEY: ${LARAVEL_APP_KEY:-}
+      LOG_CHANNEL: stderr
+      DB_CONNECTION: pgsql
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_DATABASE: refunds_laravel
+      DB_USERNAME: refunds
+      DB_PASSWORD: refunds
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "3002:3002"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3002/api/v1/health >/dev/null || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  api-nest:
+    build:
+      context: .
+      dockerfile: apps/api-nest/Dockerfile
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      <<: *api-env
+      NODE_ENV: production
+      PORT: 3001
+      DATABASE_URL: postgresql://refunds:refunds@db:5432/refunds_nest
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "3001:3001"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3001/api/v1/health >/dev/null || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    depends_on:
+      api-laravel:
+        condition: service_healthy
+      api-nest:
+        condition: service_healthy
+    ports:
+      - "8080:80"
+
+volumes:
+  db-data:
