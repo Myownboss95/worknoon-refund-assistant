@@ -1,0 +1,5 @@
+packages:
+  - packages/*
+  - apps/api-nest
+  - apps/web
+  - tests/contract

@@ -1,0 +1,16 @@
+{
+  "name": "worknoon-refund-assistant",
+  "private": true,
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "build:contracts": "pnpm --filter @worknoon/contracts build",
+    "test:contract": "pnpm --filter @worknoon/contract-tests test --",
+    "lint": "pnpm -r lint",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "eval": "node tests/contract/scripts/eval.mjs"
+  },
+  "devDependencies": {
+    "prettier": "^3.6.2"
+  }
+}

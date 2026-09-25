@@ -1,0 +1,6 @@
+apps/api-laravel
+**/dist
+**/node_modules
+pnpm-lock.yaml
+contracts/*.yaml
+*.md

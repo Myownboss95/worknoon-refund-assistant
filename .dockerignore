@@ -1,0 +1,12 @@
+**/node_modules
+**/dist
+**/vendor
+**/coverage
+.git
+.github
+.env
+apps/api-laravel/storage/logs
+apps/api-laravel/.env
+**/.env
+**/.env.*
+!**/.env.example
