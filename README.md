@@ -17,13 +17,13 @@ React UI switches between them live.
 
 ## Quick start
 
-Requirements: Docker with Compose v2. Nothing else. No API key needed.
+Requirements: Docker with Compose v2.24 or newer (Docker Desktop includes it). Nothing else. No API key needed.
 
 ```bash
-git clone <repo-url> worknoon-refund-assistant
+git clone https://github.com/Myownboss95/worknoon-refund-assistant.git
 cd worknoon-refund-assistant
 cp .env.example .env        # optional
-docker compose up --build
+docker compose up --build   # or: docker-compose up --build
 ```
 
 | URL | What |
