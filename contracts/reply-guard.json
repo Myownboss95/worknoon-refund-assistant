@@ -1,0 +1,24 @@
+{
+  "$comment": "Checks run on every composed reply before it reaches the customer. Phrases are matched case-insensitively as substrings; leakPatterns are regex (same dialect rules as injection-patterns.json, flags 'i'). Any violation replaces the reply with the matching template from reply-templates.json and adds the REPLY_GUARD_FALLBACK flag. Violation codes: TOO_LONG, EMPTY, CONTRADICTS_DECISION, LEAKS_INTERNALS, WRONG_AMOUNT.",
+  "maxLength": 800,
+  "contradictions": {
+    "approved": ["can't offer a refund", "cannot offer a refund", "unable to offer", "not eligible", "has been denied", "been declined", "passed your request", "under review"],
+    "denied": ["has been approved", "refund is approved", "approved your refund", "will be refunded", "you will receive", "passed your request"],
+    "escalated": ["has been approved", "refund is approved", "approved your refund", "has been denied", "been declined", "not eligible", "will be refunded"]
+  },
+  "leakPatterns": [
+    "\\bR(0[1-9]|10)\\b",
+    "system\\s*prompt",
+    "policy\\s*engine",
+    "\\binjection\\b",
+    "\\bconfidence\\b",
+    "\\bextraction\\b",
+    "customer_message",
+    "order_context",
+    "\\bprompt\\b",
+    "\\bLLM\\b",
+    "language\\s*model",
+    "\\bflags?\\b"
+  ],
+  "amountRule": "If the decision is approved, every dollar amount in the reply (pattern \\$\\s?[\\d,]+(\\.\\d{2})?) must equal the decision amount formatted as {amount}. If the decision is denied or escalated, the reply must not contain any dollar amount. Violation code WRONG_AMOUNT."
+}

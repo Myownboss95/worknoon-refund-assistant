@@ -1,0 +1,23 @@
+{
+  "version": "1.0",
+  "currency": "USD",
+  "refundWindowDays": 30,
+  "changeOfMindWindowDays": 14,
+  "humanReviewThresholdCents": 50000,
+  "suspiciousRefundCount": 3,
+  "suspiciousRefundLookbackDays": 90,
+  "minAiConfidence": 0.6,
+  "maxClarificationTurns": 2,
+  "maxMessageLength": 1000,
+  "maxItemsPerRequest": 20,
+  "approvableReasons": ["damaged", "defective", "wrong_item", "changed_mind"],
+  "merchantFaultReasons": ["damaged", "defective", "wrong_item"],
+  "customerReasons": {
+    "R01": "We couldn't match this order to the details you gave us.",
+    "R02": "This order hasn't been delivered yet, so it can't be refunded. You can cancel it instead from your order page before it ships.",
+    "R03": "It was delivered more than {refundWindowDays} days ago, which is outside our refund window.",
+    "R04": "Final sale items can't be refunded.",
+    "R05": "A refund for this item has already been issued or is being reviewed.",
+    "R09": "Change-of-mind refunds are available for {changeOfMindWindowDays} days after delivery, and that window has passed."
+  }
+}

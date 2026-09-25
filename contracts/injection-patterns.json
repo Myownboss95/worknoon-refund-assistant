@@ -1,0 +1,37 @@
+{
+  "$comment": "Heuristic prompt-injection detector, run on every customer message before and independent of the model. Patterns are plain regex source compatible with both PCRE (PHP, wrapped as ~pattern~im) and JavaScript (new RegExp(pattern, 'im')). Do not use '~', lookbehind, named groups or unicode escapes. Every pattern is case-insensitive and multiline.",
+  "patterns": [
+    {
+      "id": "ignore_instructions",
+      "pattern": "\\b(ignore|disregard|forget|override)\\b.{0,30}\\b(previous|prior|above|earlier|all|your|the|any)\\b.{0,20}\\b(instructions?|prompts?|rules?|directions?|polic(y|ies)|guidelines?)\\b"
+    },
+    {
+      "id": "system_prompt",
+      "pattern": "\\bsystem\\s*prompt\\b|\\bdeveloper\\s*(message|mode)\\b|\\bhidden\\s+instructions?\\b"
+    },
+    {
+      "id": "role_play",
+      "pattern": "\\byou\\s+are\\s+now\\b|\\bact\\s+as\\s+(an?\\s+|the\\s+)?(admin|administrator|system|developer|manager|supervisor|agent)\\b|\\bpretend\\s+(to\\s+be|you\\s+are)\\b"
+    },
+    {
+      "id": "role_tags",
+      "pattern": "<\\s*/?\\s*(system|assistant|user|instructions?|customer_message|order_context)\\s*>|\\[\\s*/?\\s*(system|inst|admin)\\s*\\]|^\\s*(system|assistant|developer)\\s*:"
+    },
+    {
+      "id": "decision_override",
+      "pattern": "\\b(approve|authori[sz]e)\\b.{0,40}\\$\\s?\\d|\\b(decision|status|outcome|amount)\\s*[=:]\\s*\\w+|\\b(set|change|mark)\\b.{0,20}\\b(status|decision|outcome)\\b"
+    },
+    {
+      "id": "new_instructions",
+      "pattern": "\\b(new|updated|real|actual)\\s+instructions?\\b|\\binstructions?\\s*:"
+    },
+    {
+      "id": "jailbreak",
+      "pattern": "\\bjailbreak\\b|\\bdan\\s+mode\\b|\\bdo\\s+anything\\s+now\\b|\\badmin\\s+(override|mode)\\b|\\bbypass\\b.{0,20}\\b(rules?|polic(y|ies)|checks?|filters?)\\b"
+    },
+    {
+      "id": "encoded_blob",
+      "pattern": "[A-Za-z0-9+/]{60,}={0,2}"
+    }
+  ]
+}

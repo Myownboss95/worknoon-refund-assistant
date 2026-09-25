@@ -1,0 +1,10 @@
+{
+  "$comment": "Customer-facing templates. Used by the mock composer, as the fallback when the compose call fails or the reply guard rejects a composed reply, and for fixed system messages. Placeholders: {firstName} (first word of the customer's name), {orderNumber}, {itemNames} ('A', 'A and B', 'A, B and C'), {amount} (e.g. $1,299.00), {customerReason} (customer-safe reasons for the deny rules, from policy.config.json customerReasons, joined with a single space, placeholders inside them filled from policy config), {note} (reviewer note).",
+  "greeting": "Hi {firstName}, thanks for verifying your order {orderNumber}. Select the item or items this is about, then tell me what went wrong.",
+  "clarify": "Thanks, {firstName}. To help with your {itemNames}, could you tell me a bit more about what went wrong? For example, did it arrive damaged, is it faulty, is it the wrong item, or have you changed your mind?",
+  "approved": "Hi {firstName}, I'm sorry about the trouble with your {itemNames}. Good news: your refund of {amount} has been approved. It will go back to your original payment method within 5 to 10 business days.",
+  "denied": "Hi {firstName}, thank you for explaining what happened with your {itemNames}. I'm sorry, but I can't offer a refund for this request. {customerReason}",
+  "escalated": "Hi {firstName}, thanks for the details about your {itemNames}. I've passed your request to a member of our support team, who will review it and reply within one business day.",
+  "humanApproved": "Update from our support team: your refund of {amount} has been approved. It will go back to your original payment method within 5 to 10 business days. Note from the reviewer: {note}",
+  "humanDenied": "Update from our support team: after reviewing your request, we're unable to offer a refund. Note from the reviewer: {note}"
+}

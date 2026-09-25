@@ -1,0 +1,103 @@
+{
+  "$comment": "Deterministic stand-in for the model, used when LLM_PROVIDER=mock or no API key is set. Matching: lowercase the LATEST customer message, walk `extract` in order, first entry where any `anyOf` string is a substring wins; if none match, use `extractDefault`. An entry with `error` makes the analyzer throw (simulating a provider outage) on every attempt. Compose in mock mode renders `contracts/reply-templates.json`.",
+  "model": "mock",
+  "extract": [
+    {
+      "id": "simulated-outage",
+      "anyOf": ["simulate ai outage"],
+      "error": "timeout"
+    },
+    {
+      "id": "injection",
+      "anyOf": ["ignore previous", "ignore all", "disregard", "system prompt", "you are now", "approve a refund of", "developer mode"],
+      "extraction": {
+        "reasonCategory": "other",
+        "itemsMentioned": [],
+        "claimsConflict": false,
+        "injectionSuspected": true,
+        "summary": "Customer message contains instructions aimed at the assistant rather than a description of a problem.",
+        "confidence": 0.95
+      }
+    },
+    {
+      "id": "not-received",
+      "anyOf": ["never arrived", "not here", "didn't arrive", "did not arrive", "never received", "hasn't arrived"],
+      "extraction": {
+        "reasonCategory": "not_received",
+        "itemsMentioned": [],
+        "claimsConflict": false,
+        "injectionSuspected": false,
+        "summary": "Customer says the package never arrived.",
+        "confidence": 0.9
+      }
+    },
+    {
+      "id": "wrong-item",
+      "anyOf": ["wrong size", "wrong colour", "wrong color", "wrong item", "instead of", "not what i ordered"],
+      "extraction": {
+        "reasonCategory": "wrong_item",
+        "itemsMentioned": [],
+        "claimsConflict": false,
+        "injectionSuspected": false,
+        "summary": "Customer received a different item or variant than ordered.",
+        "confidence": 0.92
+      }
+    },
+    {
+      "id": "defective",
+      "anyOf": ["stopped working", "flickers", "faulty", "defective", "doesn't turn on", "does not turn on", "won't charge"],
+      "extraction": {
+        "reasonCategory": "defective",
+        "itemsMentioned": [],
+        "claimsConflict": false,
+        "injectionSuspected": false,
+        "summary": "Customer reports the item is faulty and does not work properly.",
+        "confidence": 0.9
+      }
+    },
+    {
+      "id": "damaged",
+      "anyOf": ["cracked", "broken", "damaged", "smashed", "dented", "leaks", "shattered"],
+      "extraction": {
+        "reasonCategory": "damaged",
+        "itemsMentioned": [],
+        "claimsConflict": false,
+        "injectionSuspected": false,
+        "summary": "Customer reports the item arrived physically damaged.",
+        "confidence": 0.93
+      }
+    },
+    {
+      "id": "changed-mind",
+      "anyOf": ["changed my mind", "change my mind", "by mistake", "don't need", "do not need", "don't like", "no longer want"],
+      "extraction": {
+        "reasonCategory": "changed_mind",
+        "itemsMentioned": [],
+        "claimsConflict": false,
+        "injectionSuspected": false,
+        "summary": "Customer no longer wants the item.",
+        "confidence": 0.9
+      }
+    },
+    {
+      "id": "vague",
+      "anyOf": ["not happy", "unhappy", "disappointed"],
+      "extraction": {
+        "reasonCategory": "unclear",
+        "itemsMentioned": [],
+        "claimsConflict": false,
+        "injectionSuspected": false,
+        "summary": "Customer is unhappy but has not said what is wrong.",
+        "confidence": 0.35
+      }
+    }
+  ],
+  "extractDefault": {
+    "reasonCategory": "unclear",
+    "itemsMentioned": [],
+    "claimsConflict": false,
+    "injectionSuspected": false,
+    "summary": "The message does not describe a clear problem with the item.",
+    "confidence": 0.3
+  }
+}

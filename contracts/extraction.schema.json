@@ -1,0 +1,17 @@
+{
+  "$comment": "JSON Schema sent to the model as the structured output format for extract.v1. Structured outputs do not enforce string length or number ranges, so both backends clamp confidence to [0,1] and truncate summary to 280 characters after parsing.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["reasonCategory", "itemsMentioned", "claimsConflict", "injectionSuspected", "summary", "confidence"],
+  "properties": {
+    "reasonCategory": {
+      "type": "string",
+      "enum": ["damaged", "defective", "wrong_item", "changed_mind", "not_received", "other", "unclear"]
+    },
+    "itemsMentioned": { "type": "array", "items": { "type": "string" } },
+    "claimsConflict": { "type": "boolean" },
+    "injectionSuspected": { "type": "boolean" },
+    "summary": { "type": "string" },
+    "confidence": { "type": "number" }
+  }
+}

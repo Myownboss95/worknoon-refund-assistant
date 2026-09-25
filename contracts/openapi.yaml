@@ -1,0 +1,692 @@
+openapi: 3.1.0
+info:
+  title: Worknoon Refund Assistant API
+  version: 1.0.0
+  description: |
+    One contract, two interchangeable implementations (Laravel 13 and NestJS 12).
+    Behaviour is specified in docs/pipeline.md; rule semantics in policy/refund-policy.md.
+    All money is integer cents (USD). All timestamps are ISO 8601 UTC strings with a trailing Z
+    and millisecond precision (e.g. 2026-09-25T10:00:00.000Z). All property names are camelCase.
+servers:
+  - url: /api/laravel/v1
+    description: Laravel backend through the web nginx proxy
+  - url: /api/nest/v1
+    description: NestJS backend through the web nginx proxy
+
+tags:
+  - name: customer
+  - name: admin
+  - name: system
+
+paths:
+  /health:
+    get:
+      tags: [system]
+      operationId: getHealth
+      responses:
+        '200':
+          description: Healthy
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+        '503':
+          description: Database unavailable
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+
+  /policy:
+    get:
+      tags: [customer]
+      operationId: getPolicy
+      responses:
+        '200':
+          description: Current policy
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Policy' }
+
+  /customers/verify:
+    post:
+      tags: [customer]
+      operationId: verifyCustomer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VerifyRequest' }
+      responses:
+        '201':
+          description: Verified; a new conversation is started
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VerifyResponse' }
+        '404': { $ref: '#/components/responses/VerificationFailed' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /conversations/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      tags: [customer]
+      operationId: getConversation
+      responses:
+        '200':
+          description: Conversation with history
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConversationDetail' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /conversations/{id}/messages:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    post:
+      tags: [customer]
+      operationId: sendMessage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SendMessageRequest' }
+      responses:
+        '200':
+          description: Assistant reply, with a decision if one was reached
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SendMessageResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: CONVERSATION_CLOSED or REFUND_ALREADY_EXISTS
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /admin/refund-requests:
+    get:
+      tags: [admin]
+      operationId: listRefundRequests
+      security: [{ adminToken: [] }]
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema: { $ref: '#/components/schemas/RefundStatus' }
+        - name: page
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, default: 1 }
+        - name: perPage
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        '200':
+          description: Page of refund requests (assistant-created only), newest first
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RefundRequestList' }
+        '401': { $ref: '#/components/responses/AdminUnauthorized' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /admin/refund-requests/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      tags: [admin]
+      operationId: getRefundRequest
+      security: [{ adminToken: [] }]
+      responses:
+        '200':
+          description: Detail with full decision trace
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RefundRequestDetail' }
+        '401': { $ref: '#/components/responses/AdminUnauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /admin/refund-requests/{id}/review:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    post:
+      tags: [admin]
+      operationId: reviewRefundRequest
+      security: [{ adminToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReviewRequest' }
+      responses:
+        '200':
+          description: Reviewed; returns the updated detail
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RefundRequestDetail' }
+        '401': { $ref: '#/components/responses/AdminUnauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: REFUND_NOT_REVIEWABLE (not escalated)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /admin/stats:
+    get:
+      tags: [admin]
+      operationId: getStats
+      security: [{ adminToken: [] }]
+      responses:
+        '200':
+          description: Counts by outcome
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Stats' }
+        '401': { $ref: '#/components/responses/AdminUnauthorized' }
+
+  /admin/demo/reset:
+    post:
+      tags: [admin]
+      operationId: resetDemo
+      description: Truncates all data and re-seeds from contracts/scenarios.json with dates relative to now.
+      security: [{ adminToken: [] }]
+      responses:
+        '200':
+          description: Reset complete
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResetResponse' }
+        '401': { $ref: '#/components/responses/AdminUnauthorized' }
+
+components:
+  securitySchemes:
+    adminToken:
+      type: apiKey
+      in: header
+      name: X-Admin-Token
+
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+
+  responses:
+    ValidationFailed:
+      description: VALIDATION_FAILED
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    VerificationFailed:
+      description: VERIFICATION_FAILED (generic, never reveals whether the email or the order was wrong)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: NOT_FOUND
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    AdminUnauthorized:
+      description: ADMIN_UNAUTHORIZED
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    RateLimited:
+      description: RATE_LIMITED
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+    ErrorCode:
+      type: string
+      enum:
+        - VALIDATION_FAILED        # 422
+        - VERIFICATION_FAILED      # 404
+        - NOT_FOUND                # 404
+        - CONVERSATION_CLOSED      # 409
+        - REFUND_ALREADY_EXISTS    # 409
+        - REFUND_NOT_REVIEWABLE    # 409
+        - ADMIN_UNAUTHORIZED       # 401
+        - RATE_LIMITED             # 429
+        - AI_UNAVAILABLE           # 503 (reserved; the pipeline fails safe to escalation instead)
+        - INTERNAL_ERROR           # 500
+
+    Error:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          additionalProperties: false
+          properties:
+            code: { $ref: '#/components/schemas/ErrorCode' }
+            message: { type: string }
+            details:
+              type: array
+              items:
+                type: object
+                required: [field, message]
+                properties:
+                  field: { type: string }
+                  message: { type: string }
+
+    RefundStatus:
+      type: string
+      enum: [approved, denied, escalated]
+
+    ReasonCategory:
+      type: string
+      enum: [damaged, defective, wrong_item, changed_mind, not_received, other, unclear]
+
+    RuleOutcome:
+      type: string
+      enum: [pass, not_applicable, deny, escalate, approve]
+
+    Flag:
+      type: string
+      enum:
+        - HIGH_REFUND_FREQUENCY
+        - CLAIM_CONFLICT
+        - INJECTION_HEURISTIC
+        - INJECTION_MODEL
+        - LOW_CONFIDENCE
+        - AI_UNAVAILABLE
+        - CLARIFICATION_EXHAUSTED
+        - REPLY_GUARD_FALLBACK
+        - COMPOSE_UNAVAILABLE
+
+    Health:
+      type: object
+      required: [status, backend, database, ai, policyVersion, time]
+      properties:
+        status: { type: string, enum: [ok, degraded] }
+        backend: { type: string, enum: [laravel, nest] }
+        database: { type: string, enum: [ok, down] }
+        ai:
+          type: object
+          required: [provider, model]
+          properties:
+            provider: { type: string, enum: [mock, anthropic] }
+            model: { type: string, description: "'mock' in mock mode, else the model id" }
+        policyVersion: { type: string }
+        time: { type: string, format: date-time }
+
+    PolicyConfig:
+      type: object
+      description: The parsed contents of contracts/policy.config.json (without $comment keys).
+      required: [version, currency, refundWindowDays, changeOfMindWindowDays, humanReviewThresholdCents,
+                 suspiciousRefundCount, suspiciousRefundLookbackDays, minAiConfidence, maxClarificationTurns,
+                 maxMessageLength, maxItemsPerRequest]
+      properties:
+        version: { type: string }
+        currency: { type: string }
+        refundWindowDays: { type: integer }
+        changeOfMindWindowDays: { type: integer }
+        humanReviewThresholdCents: { type: integer }
+        suspiciousRefundCount: { type: integer }
+        suspiciousRefundLookbackDays: { type: integer }
+        minAiConfidence: { type: number }
+        maxClarificationTurns: { type: integer }
+        maxMessageLength: { type: integer }
+        maxItemsPerRequest: { type: integer }
+
+    Policy:
+      type: object
+      required: [version, markdown, config]
+      properties:
+        version: { type: string }
+        markdown: { type: string }
+        config: { $ref: '#/components/schemas/PolicyConfig' }
+
+    VerifyRequest:
+      type: object
+      required: [email, orderNumber]
+      properties:
+        email: { type: string, format: email, maxLength: 254 }
+        orderNumber: { type: string, pattern: '^[A-Za-z0-9-]{3,32}$' }
+
+    OrderItem:
+      type: object
+      required: [id, sku, name, quantity, unitPriceCents, lineTotalCents, finalSale, refundStatus]
+      properties:
+        id: { type: string, format: uuid }
+        sku: { type: string }
+        name: { type: string }
+        quantity: { type: integer }
+        unitPriceCents: { type: integer }
+        lineTotalCents: { type: integer }
+        finalSale: { type: boolean }
+        refundStatus:
+          type: [string, 'null']
+          enum: [approved, pending, null]
+
+    Order:
+      type: object
+      required: [id, orderNumber, status, placedAt, deliveredAt, totalCents, currency, items]
+      properties:
+        id: { type: string, format: uuid }
+        orderNumber: { type: string }
+        status: { type: string, enum: [processing, shipped, delivered] }
+        placedAt: { type: string, format: date-time }
+        deliveredAt: { type: [string, 'null'], format: date-time }
+        totalCents: { type: integer }
+        currency: { type: string }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/OrderItem' }
+
+    Message:
+      type: object
+      required: [id, role, content, itemIds, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        role: { type: string, enum: [customer, assistant, system] }
+        content: { type: string }
+        itemIds:
+          type: [array, 'null']
+          items: { type: string, format: uuid }
+        createdAt: { type: string, format: date-time }
+
+    Decision:
+      type: object
+      description: Customer-safe view of a decision. Never includes flags or internal rule reasons.
+      required: [refundRequestId, status, decidedBy, amountCents, currency, decisiveRuleIds, customerReason]
+      properties:
+        refundRequestId: { type: string, format: uuid }
+        status: { $ref: '#/components/schemas/RefundStatus' }
+        decidedBy: { type: string, enum: [policy, human] }
+        amountCents: { type: integer }
+        currency: { type: string }
+        decisiveRuleIds:
+          type: array
+          items: { type: string }
+        customerReason:
+          type: string
+          description: |
+            approved: "Your refund of {amount} has been approved."
+            denied: the customer-safe reasons (policy.config.json customerReasons) for the decisive rules, joined by a space.
+            escalated: "A member of our support team will review your request within one business day."
+            After human review the text for the new status is used.
+
+    ConversationSummary:
+      type: object
+      required: [id, status, clarificationTurns, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        status: { type: string, enum: [open, closed] }
+        clarificationTurns: { type: integer }
+        createdAt: { type: string, format: date-time }
+
+    VerifyResponse:
+      type: object
+      required: [conversation, customer, order, messages]
+      properties:
+        conversation: { $ref: '#/components/schemas/ConversationSummary' }
+        customer:
+          type: object
+          required: [name, firstName]
+          properties:
+            name: { type: string }
+            firstName: { type: string }
+        order: { $ref: '#/components/schemas/Order' }
+        messages:
+          type: array
+          items: { $ref: '#/components/schemas/Message' }
+
+    ConversationDetail:
+      type: object
+      required: [conversation, customer, order, messages, decision]
+      properties:
+        conversation: { $ref: '#/components/schemas/ConversationSummary' }
+        customer:
+          type: object
+          required: [name, firstName]
+          properties:
+            name: { type: string }
+            firstName: { type: string }
+        order: { $ref: '#/components/schemas/Order' }
+        messages:
+          type: array
+          items: { $ref: '#/components/schemas/Message' }
+        decision:
+          oneOf:
+            - $ref: '#/components/schemas/Decision'
+            - type: 'null'
+
+    SendMessageRequest:
+      type: object
+      required: [text, itemIds]
+      properties:
+        text: { type: string, minLength: 1, maxLength: 1000 }
+        itemIds:
+          type: array
+          minItems: 1
+          maxItems: 20
+          uniqueItems: true
+          items: { type: string, format: uuid }
+
+    SendMessageResponse:
+      type: object
+      required: [conversation, messages, reply, decision]
+      properties:
+        conversation: { $ref: '#/components/schemas/ConversationSummary' }
+        messages:
+          description: The stored customer message followed by the assistant reply.
+          type: array
+          items: { $ref: '#/components/schemas/Message' }
+        reply: { $ref: '#/components/schemas/Message' }
+        decision:
+          oneOf:
+            - $ref: '#/components/schemas/Decision'
+            - type: 'null'
+
+    RuleResult:
+      type: object
+      required: [ruleId, outcome, reason]
+      properties:
+        ruleId: { type: string }
+        outcome: { $ref: '#/components/schemas/RuleOutcome' }
+        reason: { type: string }
+
+    Extraction:
+      type: object
+      required: [reasonCategory, itemsMentioned, claimsConflict, injectionSuspected, summary, confidence]
+      properties:
+        reasonCategory: { $ref: '#/components/schemas/ReasonCategory' }
+        itemsMentioned: { type: array, items: { type: string } }
+        claimsConflict: { type: boolean }
+        injectionSuspected: { type: boolean }
+        summary: { type: string, maxLength: 280 }
+        confidence: { type: number, minimum: 0, maximum: 1 }
+
+    AiCall:
+      type: object
+      required: [step, attempt, ok, latencyMs, inputTokens, outputTokens, error]
+      properties:
+        step: { type: string, enum: [extract, compose] }
+        attempt: { type: integer }
+        ok: { type: boolean }
+        latencyMs: { type: integer }
+        inputTokens: { type: integer }
+        outputTokens: { type: integer }
+        error: { type: [string, 'null'], enum: [timeout, provider_error, invalid_output, null] }
+
+    DecisionTrace:
+      type: object
+      required: [policyVersion, evaluatedAt, facts, rules, extraction, heuristicMatches, flags, clarificationTurns, ai, replyGuard]
+      properties:
+        policyVersion: { type: string }
+        evaluatedAt: { type: string, format: date-time }
+        facts:
+          type: object
+          required: [orderStatus, daysSinceDelivery, amountCents, recentApprovedRefunds, finalSaleItemIds, alreadyRefundedItemIds]
+          properties:
+            orderStatus: { type: string }
+            daysSinceDelivery: { type: [integer, 'null'] }
+            amountCents: { type: integer }
+            recentApprovedRefunds: { type: integer }
+            finalSaleItemIds: { type: array, items: { type: string } }
+            alreadyRefundedItemIds: { type: array, items: { type: string } }
+        rules:
+          type: array
+          items: { $ref: '#/components/schemas/RuleResult' }
+        extraction:
+          oneOf:
+            - $ref: '#/components/schemas/Extraction'
+            - type: 'null'
+        heuristicMatches: { type: array, items: { type: string } }
+        flags: { type: array, items: { $ref: '#/components/schemas/Flag' } }
+        clarificationTurns: { type: integer }
+        ai:
+          type: object
+          required: [provider, model, promptVersions, calls]
+          properties:
+            provider: { type: string, enum: [mock, anthropic] }
+            model: { type: string }
+            promptVersions:
+              type: object
+              required: [extract, compose]
+              properties:
+                extract: { type: string }
+                compose: { type: string }
+            calls: { type: array, items: { $ref: '#/components/schemas/AiCall' } }
+        replyGuard:
+          type: object
+          required: [passed, violations, usedTemplate]
+          properties:
+            passed: { type: boolean }
+            violations: { type: array, items: { type: string } }
+            usedTemplate: { type: boolean }
+
+    RefundRequestSummary:
+      type: object
+      required: [id, status, decidedBy, customer, orderNumber, amountCents, currency, reasonCategory, flags, decisiveRuleIds, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        status: { $ref: '#/components/schemas/RefundStatus' }
+        decidedBy: { type: string, enum: [policy, human] }
+        customer:
+          type: object
+          required: [name, email]
+          properties:
+            name: { type: string }
+            email: { type: string }
+        orderNumber: { type: string }
+        amountCents: { type: integer }
+        currency: { type: string }
+        reasonCategory:
+          oneOf:
+            - $ref: '#/components/schemas/ReasonCategory'
+            - type: 'null'
+        flags: { type: array, items: { $ref: '#/components/schemas/Flag' } }
+        decisiveRuleIds: { type: array, items: { type: string } }
+        createdAt: { type: string, format: date-time }
+
+    RefundRequestList:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/RefundRequestSummary' }
+        meta:
+          type: object
+          required: [page, perPage, total, lastPage]
+          properties:
+            page: { type: integer }
+            perPage: { type: integer }
+            total: { type: integer }
+            lastPage: { type: integer, description: 'At least 1' }
+
+    AuditEvent:
+      type: object
+      required: [id, type, actor, data, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        type: { type: string, examples: [conversation.started, conversation.clarification_requested, refund.decided, refund.reviewed] }
+        actor: { type: string, examples: [system, admin, customer] }
+        data: { type: object }
+        createdAt: { type: string, format: date-time }
+
+    RefundRequestDetail:
+      allOf:
+        - $ref: '#/components/schemas/RefundRequestSummary'
+        - type: object
+          required: [items, conversation, trace, review, auditEvents]
+          properties:
+            items:
+              type: array
+              items:
+                type: object
+                required: [orderItemId, sku, name, quantity, amountCents, finalSale]
+                properties:
+                  orderItemId: { type: string, format: uuid }
+                  sku: { type: string }
+                  name: { type: string }
+                  quantity: { type: integer }
+                  amountCents: { type: integer }
+                  finalSale: { type: boolean }
+            conversation:
+              type: object
+              required: [id, messages]
+              properties:
+                id: { type: string, format: uuid }
+                messages:
+                  type: array
+                  items: { $ref: '#/components/schemas/Message' }
+            trace: { $ref: '#/components/schemas/DecisionTrace' }
+            review:
+              oneOf:
+                - type: 'null'
+                - type: object
+                  required: [decision, note, reviewer, reviewedAt]
+                  properties:
+                    decision: { type: string, enum: [approve, deny] }
+                    note: { type: string }
+                    reviewer: { type: string }
+                    reviewedAt: { type: string, format: date-time }
+            auditEvents:
+              type: array
+              description: Events for this refund request and its conversation, oldest first.
+              items: { $ref: '#/components/schemas/AuditEvent' }
+
+    ReviewRequest:
+      type: object
+      required: [decision, note]
+      properties:
+        decision: { type: string, enum: [approve, deny] }
+        note: { type: string, minLength: 3, maxLength: 1000 }
+
+    Stats:
+      type: object
+      required: [total, byStatus, escalatedTotal, humanReviewed, escalationRate, autoResolutionRate]
+      properties:
+        total: { type: integer }
+        byStatus:
+          type: object
+          required: [approved, denied, escalated]
+          properties:
+            approved: { type: integer }
+            denied: { type: integer }
+            escalated: { type: integer }
+        escalatedTotal: { type: integer }
+        humanReviewed: { type: integer }
+        escalationRate: { type: number }
+        autoResolutionRate: { type: number }
+
+    ResetResponse:
+      type: object
+      required: [reset, customers, orders]
+      properties:
+        reset: { type: boolean, const: true }
+        customers: { type: integer }
+        orders: { type: integer }
