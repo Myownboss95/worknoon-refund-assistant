@@ -2,7 +2,10 @@
 
 declare(strict_types=1);
 
+use App\Ai\ClaudeRefundAnalyzer;
 use App\Ai\Contracts\RefundAnalyzer;
+use App\Ai\LlmCallBudget;
+use App\Ai\Prompts\PromptLibrary;
 use App\Data\AnalyzerResult;
 use App\Data\ComposeInput;
 use App\Data\ExtractionInput;
@@ -14,6 +17,7 @@ use App\Models\Message;
 use App\Models\OrderItem;
 use App\Models\RefundRequest;
 use App\Models\RefundRequestItem;
+use Illuminate\Support\Facades\Http;
 
 beforeEach(fn () => seed_scenarios());
 
@@ -218,4 +222,51 @@ it('returns 409 when another request claims the item while the model is working'
 
     expect(RefundRequest::query()->whereNotNull('conversation_id')->count())->toBe(0)
         ->and(Message::query()->where('role', 'assistant')->count())->toBe(1); // the greeting only
+});
+
+it('fails safe to a human when the hourly provider budget is spent', function (): void {
+    config()->set('ai.providers.anthropic.key', 'sk-ant-test');
+    config()->set('refunds.llm.max_calls_per_hour', 0);
+    Http::preventStrayRequests();
+    Http::fake();
+
+    app()->forgetInstance(LlmCallBudget::class);
+    app()->instance(RefundAnalyzer::class, new ClaudeRefundAnalyzer(
+        app(PromptLibrary::class), 'claude-haiku-4-5', 20, app(LlmCallBudget::class),
+    ));
+
+    $response = request_refund('ada.okafor@example.com', 'WN-1001', ['KIT-BLND-600'], 'It arrived cracked.')
+        ->assertOk()
+        ->assertJsonPath('decision.status', 'escalated');
+
+    Http::assertNothingSent();
+
+    refund_detail($response->json('decision.refundRequestId'))
+        ->assertJsonPath('flags', ['AI_UNAVAILABLE', 'COMPOSE_UNAVAILABLE'])
+        ->assertJsonPath('trace.replyGuard.usedTemplate', true);
+
+    $calls = RefundRequest::query()->findOrFail($response->json('decision.refundRequestId'))->trace['ai']['calls'];
+
+    expect(array_map(static fn (array $call): array => [$call['step'], $call['ok'], $call['error']], $calls))->toBe([
+        ['extract', false, 'provider_error'],
+        ['extract', false, 'provider_error'],
+        ['compose', false, 'provider_error'],
+        ['compose', false, 'provider_error'],
+    ]);
+});
+
+it('orders selected items by sku, whatever order the customer picked them in', function (): void {
+    $analyzer = script_analyzer();
+    [$conversationId, $items] = start_conversation('ngozi.eze@example.com', 'WN-1014');
+
+    send_message(
+        $conversationId,
+        'Both the side table and the lamp arrived damaged. The table leg is split.',
+        [$items['HOM-TBL-OAK'], $items['HOM-LAMP-TBL']],
+    )->assertOk();
+
+    $bySku = OrderItem::query()->whereIn('sku', ['HOM-LAMP-TBL', 'HOM-TBL-OAK'])->orderBy('sku')->pluck('name')->all();
+
+    expect(array_column($analyzer->lastExtraction->orderContext->toArray()['selectedItems'], 'name'))->toBe($bySku)
+        ->and($analyzer->lastCompose?->itemNames)->toBe($bySku);
 });

@@ -13,6 +13,7 @@ enum ErrorCode: string
     case VerificationFailed = 'VERIFICATION_FAILED';
     case NotFound = 'NOT_FOUND';
     case ConversationClosed = 'CONVERSATION_CLOSED';
+    case ConversationBusy = 'CONVERSATION_BUSY';
     case RefundAlreadyExists = 'REFUND_ALREADY_EXISTS';
     case RefundNotReviewable = 'REFUND_NOT_REVIEWABLE';
     case AdminUnauthorized = 'ADMIN_UNAUTHORIZED';
@@ -25,7 +26,7 @@ enum ErrorCode: string
         return match ($this) {
             self::ValidationFailed => 422,
             self::VerificationFailed, self::NotFound => 404,
-            self::ConversationClosed, self::RefundAlreadyExists, self::RefundNotReviewable => 409,
+            self::ConversationClosed, self::ConversationBusy, self::RefundAlreadyExists, self::RefundNotReviewable => 409,
             self::AdminUnauthorized => 401,
             self::RateLimited => 429,
             self::AiUnavailable => 503,

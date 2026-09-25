@@ -5,6 +5,7 @@ declare(strict_types=1);
 use App\Enums\ConversationStatus;
 use App\Models\AuditEvent;
 use App\Models\Conversation;
+use App\Models\Message;
 
 beforeEach(fn () => seed_scenarios());
 
@@ -101,3 +102,45 @@ it('validates the request', function (array $body, array $fields): void {
     'order number too long' => [['email' => 'ada.okafor@example.com', 'orderNumber' => str_repeat('A', 33)], ['orderNumber']],
     'wrong types' => [['email' => ['a@b.c'], 'orderNumber' => 1001], ['email', 'orderNumber']],
 ]);
+
+describe('conversations per order', function (): void {
+    beforeEach(fn () => config()->set('refunds.rate_limits.conversations_per_order_per_day', 3));
+
+    it('allows MAX_CONVERSATIONS_PER_ORDER_PER_DAY conversations per order in 24 hours, then answers 429 and creates nothing', function (): void {
+        foreach (range(1, 3) as $ignored) {
+            verify_customer('ada.okafor@example.com', 'WN-1001')->assertCreated();
+        }
+
+        $messages = Message::query()->count();
+        $audits = AuditEvent::query()->count();
+
+        verify_customer('ada.okafor@example.com', 'WN-1001')
+            ->assertTooManyRequests()
+            ->assertExactJson(['error' => ['code' => 'RATE_LIMITED', 'message' => 'Too many attempts for this order. Please try again later.']]);
+
+        expect(Conversation::query()->count())->toBe(3)
+            ->and(Message::query()->count())->toBe($messages)
+            ->and(AuditEvent::query()->count())->toBe($audits);
+
+        // Other orders are unaffected.
+        verify_customer('chidi.nwosu@example.com', 'WN-1003')->assertCreated();
+    });
+
+    it('counts a rolling 24 hours', function (): void {
+        $this->travel(-25)->hours();
+        foreach (range(1, 3) as $ignored) {
+            verify_customer('ada.okafor@example.com', 'WN-1001')->assertCreated();
+        }
+        $this->travelBack();
+
+        verify_customer('ada.okafor@example.com', 'WN-1001')->assertCreated();
+    });
+
+    it('still answers a wrong order number with the generic 404', function (): void {
+        foreach (range(1, 3) as $ignored) {
+            verify_customer('ada.okafor@example.com', 'WN-1001')->assertCreated();
+        }
+
+        verify_customer('ada.okafor@example.com', 'WN-9999')->assertNotFound()->assertJsonPath('error.code', 'VERIFICATION_FAILED');
+    });
+});

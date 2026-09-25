@@ -40,11 +40,22 @@ return [
         ARRAY_FILTER_USE_KEY,
     ),
 
+    // Enables POST /admin/demo/reset and tolerates the well-known demo admin token.
+    'demo_mode' => filter_var(env('DEMO_MODE', false), FILTER_VALIDATE_BOOLEAN),
+
     'admin_token' => (string) env('ADMIN_TOKEN', 'demo-admin'),
+
+    // IPs/CIDRs whose X-Forwarded-For is honoured. Empty trusts none: the socket address is the client.
+    'trusted_proxies' => array_values(array_filter(
+        array_map(trim(...), explode(',', (string) env('TRUSTED_PROXIES', ''))),
+        static fn (string $proxy): bool => $proxy !== '',
+    )),
 
     'rate_limits' => [
         'verify_per_minute' => (int) env('RATE_LIMIT_VERIFY_PER_MINUTE', 60),
         'messages_per_minute' => (int) env('RATE_LIMIT_MESSAGES_PER_MINUTE', 60),
+        'admin_failures_per_minute' => (int) env('RATE_LIMIT_ADMIN_FAILURES_PER_MINUTE', 20),
+        'conversations_per_order_per_day' => (int) env('MAX_CONVERSATIONS_PER_ORDER_PER_DAY', 20),
     ],
 
     'llm' => [
@@ -53,6 +64,8 @@ return [
         'model' => (string) env('LLM_MODEL', 'claude-haiku-4-5'),
         'timeout_seconds' => 20,
         'max_attempts' => 2,
+        // Global budget of real provider calls (every extract and compose attempt) per rolling hour.
+        'max_calls_per_hour' => (int) env('LLM_MAX_CALLS_PER_HOUR', 1000),
     ],
 
 ];

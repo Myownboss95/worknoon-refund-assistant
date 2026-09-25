@@ -12,6 +12,8 @@ if [ -z "${APP_KEY:-}" ]; then
 fi
 
 php artisan config:cache --no-ansi
+# Refuses to start with a weak ADMIN_TOKEN outside demo mode; warns once when weak in demo mode.
+php artisan refunds:check-admin-token --no-ansi
 php artisan route:cache --no-ansi
 php artisan event:cache --no-ansi
 

@@ -6,6 +6,7 @@ use App\Models\AuditEvent;
 use App\Models\Conversation;
 use App\Models\Customer;
 use App\Models\RefundRequest;
+use Illuminate\Http\Middleware\TrustProxies;
 
 beforeEach(fn () => seed_scenarios());
 
@@ -332,5 +333,97 @@ describe('reset', function (): void {
 
         // The scenarios work again after a reset.
         expect(decide_scenario(1))->not->toBeEmpty();
+    });
+});
+
+describe('reset outside demo mode', function (): void {
+    beforeEach(fn () => config()->set('refunds.demo_mode', false));
+
+    it('answers 404 NOT_FOUND and resets nothing', function (): void {
+        decide_scenario(1);
+
+        $this->postJson('/api/v1/admin/demo/reset', [], admin_headers())
+            ->assertNotFound()
+            ->assertExactJson(['error' => ['code' => 'NOT_FOUND', 'message' => 'The requested resource was not found.']]);
+
+        expect(Conversation::query()->count())->toBe(1);
+    });
+
+    it('still checks the admin token first', function (): void {
+        $this->postJson('/api/v1/admin/demo/reset')->assertUnauthorized()->assertJsonPath('error.code', 'ADMIN_UNAUTHORIZED');
+    });
+});
+
+describe('list paging', function (): void {
+    it('caps page at 10000', function (): void {
+        $this->getJson('/api/v1/admin/refund-requests?page=10000', admin_headers())
+            ->assertOk()
+            ->assertJsonPath('meta.page', 10000)
+            ->assertJsonPath('data', []);
+
+        $this->getJson('/api/v1/admin/refund-requests?page=10001', admin_headers())
+            ->assertUnprocessable()
+            ->assertJsonPath('error.code', 'VALIDATION_FAILED')
+            ->assertJsonPath('error.details.0.field', 'page');
+    });
+});
+
+describe('failed admin attempts', function (): void {
+    beforeEach(fn () => config()->set('refunds.rate_limits.admin_failures_per_minute', 3));
+
+    it('locks the IP out of every admin route once the failures are exceeded, until the window passes', function (): void {
+        foreach (range(1, 3) as $ignored) {
+            $this->getJson('/api/v1/admin/stats', ['X-Admin-Token' => 'wrong'])->assertUnauthorized();
+        }
+
+        $this->getJson('/api/v1/admin/stats', ['X-Admin-Token' => 'wrong'])
+            ->assertTooManyRequests()
+            ->assertHeader('Retry-After')
+            ->assertExactJson(['error' => ['code' => 'RATE_LIMITED', 'message' => 'Too many requests. Please wait a moment and try again.']]);
+
+        // Even with the right token, from this IP, on any admin route.
+        $this->getJson('/api/v1/admin/refund-requests', admin_headers())->assertTooManyRequests();
+
+        $this->travel(61)->seconds();
+
+        $this->getJson('/api/v1/admin/stats', admin_headers())->assertOk();
+    });
+
+    it('does not count successful requests', function (): void {
+        foreach (range(1, 10) as $ignored) {
+            $this->getJson('/api/v1/admin/stats', admin_headers())->assertOk();
+        }
+
+        $this->getJson('/api/v1/admin/stats', ['X-Admin-Token' => 'wrong'])->assertUnauthorized();
+    });
+
+    it('keys on the socket address, ignoring X-Forwarded-For from untrusted clients', function (): void {
+        foreach (range(1, 3) as $i) {
+            $this->getJson('/api/v1/admin/stats', ['X-Admin-Token' => 'wrong', 'X-Forwarded-For' => "203.0.113.{$i}"])
+                ->assertUnauthorized();
+        }
+
+        $this->getJson('/api/v1/admin/stats', ['X-Admin-Token' => 'wrong', 'X-Forwarded-For' => '203.0.113.99'])
+            ->assertTooManyRequests();
+    });
+
+    it('honours X-Forwarded-For from a trusted proxy', function (): void {
+        TrustProxies::at(['127.0.0.1']);
+
+        try {
+            foreach (range(1, 3) as $ignored) {
+                $this->getJson('/api/v1/admin/stats', ['X-Admin-Token' => 'wrong', 'X-Forwarded-For' => '203.0.113.1'])
+                    ->assertUnauthorized();
+            }
+
+            $this->getJson('/api/v1/admin/stats', ['X-Admin-Token' => 'wrong', 'X-Forwarded-For' => '203.0.113.1'])
+                ->assertTooManyRequests();
+
+            // A different client behind the same proxy is not affected.
+            $this->getJson('/api/v1/admin/stats', ['X-Admin-Token' => 'wrong', 'X-Forwarded-For' => '203.0.113.2'])
+                ->assertUnauthorized();
+        } finally {
+            TrustProxies::at([]);
+        }
     });
 });

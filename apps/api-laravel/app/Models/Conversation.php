@@ -21,6 +21,7 @@ use Illuminate\Database\Eloquent\Relations\HasOne;
  * @property string $order_id
  * @property ConversationStatus $status
  * @property int $clarification_turns
+ * @property CarbonImmutable|null $locked_until
  * @property CarbonImmutable $created_at
  * @property CarbonImmutable $updated_at
  * @property-read Customer $customer
@@ -87,6 +88,7 @@ final class Conversation extends Model
         return [
             'status' => ConversationStatus::class,
             'clarification_turns' => 'integer',
+            'locked_until' => 'immutable_datetime',
             'created_at' => 'immutable_datetime',
             'updated_at' => 'immutable_datetime',
         ];

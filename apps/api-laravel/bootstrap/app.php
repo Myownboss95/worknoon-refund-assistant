@@ -21,8 +21,7 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->append(SecurityHeaders::class);
 
-        // Behind the web container's nginx; only trust proxies on private networks.
-        $middleware->trustProxies(at: ['127.0.0.1', '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16']);
+        // Trusted proxies come from TRUSTED_PROXIES (default: none), applied in AppServiceProvider::boot.
 
         // Reject a bad admin token before route model binding can reveal whether an id exists.
         $middleware->prependToPriorityList(before: SubstituteBindings::class, prepend: EnsureAdminToken::class);

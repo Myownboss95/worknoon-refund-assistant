@@ -22,7 +22,8 @@ use Throwable;
 
 /**
  * Anthropic through laravel/ai. Extraction uses native structured output at temperature 0; the
- * output is validated again here because a schema-shaped reply can still be wrong.
+ * output is validated again here because a schema-shaped reply can still be wrong. Every attempt
+ * is charged to the global hourly call budget (LlmCallBudget).
  */
 final readonly class ClaudeRefundAnalyzer implements RefundAnalyzer
 {
@@ -30,11 +31,12 @@ final readonly class ClaudeRefundAnalyzer implements RefundAnalyzer
         private PromptLibrary $prompts,
         private string $model,
         private int $timeoutSeconds,
+        private LlmCallBudget $budget,
     ) {}
 
     public function extract(ExtractionInput $input): AnalyzerResult
     {
-        $response = $this->call(fn (): AgentResponse => (new RefundExtractor($this->prompts->extractInstructions))->prompt(
+        $response = $this->call(fn (): AgentResponse => (new RefundExtractor($this->prompts->extractInstructions, $this->model))->prompt(
             $this->prompts->extractUserContent($input),
             model: $this->model,
             timeout: $this->timeoutSeconds,
@@ -53,7 +55,7 @@ final readonly class ClaudeRefundAnalyzer implements RefundAnalyzer
 
     public function compose(ComposeInput $input): AnalyzerResult
     {
-        $response = $this->call(fn (): AgentResponse => (new ReplyComposer($this->prompts->composeInstructions))->prompt(
+        $response = $this->call(fn (): AgentResponse => (new ReplyComposer($this->prompts->composeInstructions, $this->model))->prompt(
             $this->prompts->composeUserContent($input),
             model: $this->model,
             timeout: $this->timeoutSeconds,
@@ -77,10 +79,17 @@ final readonly class ClaudeRefundAnalyzer implements RefundAnalyzer
     }
 
     /**
+     * One provider call, charged to the hourly budget first. An exhausted budget fails the attempt as
+     * provider_error without calling the provider, which leads to the normal fail-safe path.
+     *
      * @param  Closure(): AgentResponse  $callback
      */
     private function call(Closure $callback): AgentResponse
     {
+        if (! $this->budget->take()) {
+            throw new AnalyzerFailed(AiErrorCode::ProviderError);
+        }
+
         try {
             return $callback();
         } catch (Throwable $exception) {

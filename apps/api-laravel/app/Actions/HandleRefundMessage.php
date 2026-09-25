@@ -45,6 +45,7 @@ use App\Models\RefundRequest;
 use App\Models\RefundRequestItem;
 use App\Queries\ItemRefundStates;
 use App\Support\AuditLog;
+use App\Support\ConversationTurnLock;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
@@ -67,9 +68,26 @@ final readonly class HandleRefundMessage
         private PolicyConfig $config,
         private ItemRefundStates $refundStates,
         private AuditLog $audit,
+        private ConversationTurnLock $turnLock,
     ) {}
 
     public function __invoke(Conversation $conversation, SendMessageData $data): MessageOutcome
+    {
+        // 2b. One turn at a time: claim the conversation before anything is stored or sent to the model.
+        $this->turnLock->claim($conversation);
+
+        try {
+            // Re-read under the lock: a turn that finished between route binding and the claim may
+            // have bumped the clarification counter.
+            $conversation->refresh();
+
+            return $this->handle($conversation, $data);
+        } finally {
+            $this->turnLock->release($conversation);
+        }
+    }
+
+    private function handle(Conversation $conversation, SendMessageData $data): MessageOutcome
     {
         $conversation->loadMissing(['customer', 'order.items']);
         $order = $conversation->order;
@@ -211,18 +229,17 @@ final readonly class HandleRefundMessage
     }
 
     /**
-     * Selected items in the order the customer picked them.
+     * Selected items ordered by sku, then id (the order of Order::items(), sorted by the database like
+     * everywhere else), whatever order the customer picked them in.
      *
      * @param  list<string>  $itemIds
      */
     private function selectedItems(Order $order, array $itemIds): SelectedItems
     {
-        $byId = $order->items->keyBy('id');
-
-        return new SelectedItems(array_values(array_filter(array_map(
-            static fn (string $id): ?OrderItem => $byId->get($id),
-            $itemIds,
-        ))));
+        return new SelectedItems(array_values(array_filter(
+            $order->items->all(),
+            static fn (OrderItem $item): bool => in_array($item->id, $itemIds, true),
+        )));
     }
 
     /**

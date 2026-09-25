@@ -7,7 +7,7 @@ namespace App\Data;
 use App\Models\OrderItem;
 
 /**
- * The order items a customer selected for one refund request, in the order they picked them.
+ * The order items a customer selected for one refund request, ordered by sku, then id.
  */
 final readonly class SelectedItems
 {

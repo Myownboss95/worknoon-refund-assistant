@@ -40,5 +40,10 @@
         <env name="CORS_ORIGIN" value="http://localhost:8080"/>
         <env name="RATE_LIMIT_VERIFY_PER_MINUTE" value="1000"/>
         <env name="RATE_LIMIT_MESSAGES_PER_MINUTE" value="1000"/>
+        <env name="RATE_LIMIT_ADMIN_FAILURES_PER_MINUTE" value="20"/>
+        <env name="MAX_CONVERSATIONS_PER_ORDER_PER_DAY" value="20"/>
+        <env name="LLM_MAX_CALLS_PER_HOUR" value="1000"/>
+        <env name="DEMO_MODE" value="true"/>
+        <env name="TRUSTED_PROXIES" value=""/>
     </php>
 </phpunit>

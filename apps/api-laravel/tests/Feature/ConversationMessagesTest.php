@@ -2,9 +2,15 @@
 
 declare(strict_types=1);
 
+use App\Ai\Contracts\RefundAnalyzer;
+use App\Data\AnalyzerResult;
+use App\Data\ComposeInput;
+use App\Data\ExtractionInput;
 use App\Models\AuditEvent;
+use App\Models\Conversation;
 use App\Models\Message;
 use App\Models\RefundRequest;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 beforeEach(fn () => seed_scenarios());
@@ -290,4 +296,89 @@ describe('errors', function (): void {
         'unknown uuid' => ['00000000-0000-4000-8000-000000000000'],
         'not a uuid' => ['123'],
     ]);
+});
+
+describe('one turn at a time', function (): void {
+    it('answers 409 CONVERSATION_BUSY while another turn holds the conversation, and stores nothing', function (): void {
+        [$conversationId, $items] = start_conversation('ada.okafor@example.com', 'WN-1001');
+
+        // A concurrent turn claimed the conversation a moment ago.
+        DB::table('conversations')->where('id', $conversationId)->update(['locked_until' => DB::raw("now() + interval '60 seconds'")]);
+
+        send_message($conversationId, 'It arrived cracked.', [$items['KIT-BLND-600']])
+            ->assertStatus(409)
+            ->assertExactJson(['error' => ['code' => 'CONVERSATION_BUSY', 'message' => "We're still working on your previous message."]]);
+
+        expect(Message::query()->where('conversation_id', $conversationId)->where('role', 'customer')->count())->toBe(0)
+            ->and(RefundRequest::query()->whereNotNull('conversation_id')->count())->toBe(0)
+            // The other turn's claim is left alone.
+            ->and(Conversation::query()->findOrFail($conversationId)->locked_until)->not->toBeNull();
+    });
+
+    it('lets a turn reclaim a conversation whose lock has expired', function (): void {
+        [$conversationId, $items] = start_conversation('ada.okafor@example.com', 'WN-1001');
+
+        // A worker crashed mid-turn more than 90 seconds ago.
+        DB::table('conversations')->where('id', $conversationId)->update(['locked_until' => DB::raw("now() - interval '1 second'")]);
+
+        send_message($conversationId, 'It arrived cracked.', [$items['KIT-BLND-600']])
+            ->assertOk()
+            ->assertJsonPath('decision.status', 'approved');
+    });
+
+    it('releases the claim when the turn ends', function (): void {
+        [$conversationId, $items] = start_conversation('olivia.chen@example.com', 'WN-1015');
+
+        send_message($conversationId, "I'm not happy with it.", [$items['APP-SWTR-NVY']])
+            ->assertOk()
+            ->assertJsonPath('conversation.status', 'open');
+
+        expect(Conversation::query()->findOrFail($conversationId)->locked_until)->toBeNull();
+
+        send_message($conversationId, 'Wrong colour.', [$items['APP-SWTR-NVY']])->assertOk();
+    });
+
+    it('releases the claim when the turn throws', function (): void {
+        [$conversationId, $items] = start_conversation('ada.okafor@example.com', 'WN-1001');
+
+        $real = app(RefundAnalyzer::class);
+        app()->instance(RefundAnalyzer::class, new class($real) implements RefundAnalyzer
+        {
+            public function __construct(private readonly RefundAnalyzer $real) {}
+
+            public function extract(ExtractionInput $input): AnalyzerResult
+            {
+                return $this->real->extract($input);
+            }
+
+            public function compose(ComposeInput $input): AnalyzerResult
+            {
+                return $this->real->compose($input);
+            }
+
+            public function provider(): string
+            {
+                throw new RuntimeException('boom');
+            }
+
+            public function model(): string
+            {
+                return 'broken';
+            }
+        });
+
+        send_message($conversationId, 'It arrived cracked.', [$items['KIT-BLND-600']])
+            ->assertInternalServerError()
+            ->assertJsonPath('error.code', 'INTERNAL_ERROR');
+
+        expect(Conversation::query()->findOrFail($conversationId)->locked_until)->toBeNull();
+    });
+
+    it('validates the request before claiming the conversation', function (): void {
+        [$conversationId] = start_conversation('ada.okafor@example.com', 'WN-1001');
+
+        DB::table('conversations')->where('id', $conversationId)->update(['locked_until' => DB::raw("now() + interval '60 seconds'")]);
+
+        send_message($conversationId, '', [])->assertUnprocessable()->assertJsonPath('error.code', 'VALIDATION_FAILED');
+    });
 });

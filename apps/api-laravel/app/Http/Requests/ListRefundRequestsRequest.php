@@ -23,7 +23,7 @@ final class ListRefundRequestsRequest extends FormRequest
     {
         return [
             'status' => ['nullable', 'string', Rule::enum(RefundStatus::class)],
-            'page' => ['nullable', 'integer', 'min:1'],
+            'page' => ['nullable', 'integer', 'min:1', 'max:10000'],
             'perPage' => ['nullable', 'integer', 'min:1', 'max:100'],
         ];
     }

@@ -17,11 +17,6 @@ final readonly class PromptLibrary
 
     public const string COMPOSE_VERSION = 'compose.v1';
 
-    /**
-     * Tags a customer could type to break out of the untrusted block.
-     */
-    private const array DELIMITER_TAGS = ['<customer_message>', '</customer_message>', '<order_context>', '</order_context>'];
-
     private const string MESSAGE_SEPARATOR = "\n---\n";
 
     public function __construct(
@@ -47,10 +42,7 @@ final readonly class PromptLibrary
 
     public function extractUserContent(ExtractionInput $input): string
     {
-        $messages = array_map(
-            static fn (string $message): string => str_ireplace(self::DELIMITER_TAGS, '', $message),
-            $input->customerMessages,
-        );
+        $messages = array_map(self::escape(...), $input->customerMessages);
 
         return '<order_context>'.self::json($input->orderContext->toArray()).'</order_context>'."\n"
             .'<customer_message>'.implode(self::MESSAGE_SEPARATOR, $messages).'</customer_message>';
@@ -59,6 +51,15 @@ final readonly class PromptLibrary
     public function composeUserContent(ComposeInput $input): string
     {
         return '<decision>'.self::json($input->toArray()).'</decision>';
+    }
+
+    /**
+     * Escape customer text placed inside <customer_message>: & first, then < and >, so no tag a
+     * customer types can close or open a delimiter, whatever its nesting or spacing.
+     */
+    public static function escape(string $text): string
+    {
+        return str_replace(['&', '<', '>'], ['&amp;', '&lt;', '&gt;'], $text);
     }
 
     /**

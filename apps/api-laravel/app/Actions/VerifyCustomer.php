@@ -10,16 +10,19 @@ use App\Domain\Refunds\Support\Names;
 use App\Domain\Refunds\Support\TemplateRenderer;
 use App\Enums\ConversationStatus;
 use App\Enums\MessageRole;
+use App\Exceptions\TooManyConversations;
 use App\Exceptions\VerificationFailed;
 use App\Models\Conversation;
 use App\Models\Message;
 use App\Models\Order;
 use App\Support\AuditLog;
+use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 
 /**
  * POST /customers/verify: match email + order number, then start a conversation with a greeting.
+ * At most MAX_CONVERSATIONS_PER_ORDER_PER_DAY conversations per order in a rolling 24 hours.
  */
 final readonly class VerifyCustomer
 {
@@ -27,6 +30,7 @@ final readonly class VerifyCustomer
         private TemplateRenderer $templates,
         private AuditLog $audit,
         private LoadConversation $loadConversation,
+        private int $maxConversationsPerOrderPerDay,
     ) {}
 
     public function __invoke(VerifyCustomerData $data): Conversation
@@ -47,6 +51,18 @@ final readonly class VerifyCustomer
         }
 
         $conversation = DB::transaction(function () use ($order): Conversation {
+            // Serialise verifications of the same order so the cap below cannot be raced past.
+            Order::query()->whereKey($order->id)->lockForUpdate()->value('id');
+
+            $recent = Conversation::query()
+                ->where('order_id', $order->id)
+                ->where('created_at', '>=', CarbonImmutable::now()->subDay())
+                ->count();
+
+            if ($recent >= $this->maxConversationsPerOrderPerDay) {
+                throw new TooManyConversations;
+            }
+
             $conversation = Conversation::query()->create([
                 'customer_id' => $order->customer_id,
                 'order_id' => $order->id,
