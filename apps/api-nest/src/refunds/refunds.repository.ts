@@ -87,9 +87,9 @@ export class RefundsRepository {
     const rows = TurnClaimSchema.parse(
       await this.prisma.$queryRaw`
         UPDATE conversations
-        SET locked_until = now() + interval '90 seconds', updated_at = now()
+        SET locked_until = clock_timestamp() + interval '90 seconds', updated_at = now()
         WHERE id = ${conversationId}::uuid AND status = 'open'
-          AND (locked_until IS NULL OR locked_until < now())
+          AND (locked_until IS NULL OR locked_until < clock_timestamp())
         RETURNING locked_until AS "lockedUntil"`,
     );
     const claimed = rows[0];

@@ -255,14 +255,20 @@ and create nothing.
 passes, and after request validation, claim it atomically:
 
 ```sql
-UPDATE conversations SET locked_until = now() + interval '90 seconds', updated_at = now()
-WHERE id = :id AND status = 'open' AND (locked_until IS NULL OR locked_until < now())
+UPDATE conversations SET locked_until = clock_timestamp() + interval '90 seconds', updated_at = now()
+WHERE id = :id AND status = 'open' AND (locked_until IS NULL OR locked_until < clock_timestamp())
+RETURNING locked_until
 ```
+
+The returned `locked_until` is the claim token. Release clears the lock only if it still holds that token
+(`UPDATE conversations SET locked_until = NULL WHERE id = :id AND locked_until = :token`), so a turn that stalled
+past the expiry cannot release a newer turn's claim. `clock_timestamp()` (not `now()`) keeps tokens distinct even
+inside one transaction.
 
 If no row is updated, re-read it: closed → `409 CONVERSATION_CLOSED`; otherwise
 `409 CONVERSATION_BUSY` (message: `We're still working on your previous message.`). The claim happens **before**
-the customer message is stored and before any AI call, and is released (`locked_until = null`) when the turn
-ends, whether it succeeds or throws. The 90 s expiry covers crashed workers.
+the customer message is stored and before any AI call, and is released when the turn ends, whether it succeeds
+or throws. The 90 s expiry covers crashed workers.
 
 ### AI budget
 

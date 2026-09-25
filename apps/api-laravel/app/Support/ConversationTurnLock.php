@@ -8,7 +8,6 @@ use App\Enums\ConversationStatus;
 use App\Exceptions\ConversationBusy;
 use App\Exceptions\ConversationClosed;
 use App\Models\Conversation;
-use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -21,24 +20,26 @@ final class ConversationTurnLock
     public const int LOCK_SECONDS = 90;
 
     /**
+     * Claims the conversation for one turn and returns the claim token (the stored expiry), which
+     * release() needs so it can only clear its own claim. clock_timestamp() rather than now(), so
+     * two claims inside one transaction still get distinct tokens.
+     *
      * @throws ConversationClosed when the conversation was closed in the meantime
      * @throws ConversationBusy when another turn holds the claim
      */
-    public function claim(Conversation $conversation): void
+    public function claim(Conversation $conversation): string
     {
-        $claimed = Conversation::query()
-            ->whereKey($conversation->id)
-            ->where('status', ConversationStatus::Open)
-            ->where(static fn (Builder $query) => $query
-                ->whereNull('locked_until')
-                ->orWhere('locked_until', '<', DB::raw('now()')))
-            ->update([
-                'locked_until' => DB::raw("now() + interval '".self::LOCK_SECONDS." seconds'"),
-                'updated_at' => DB::raw('now()'),
-            ]);
+        /** @var object{locked_until: string}|null $claimed */
+        $claimed = DB::selectOne(
+            'UPDATE conversations
+                SET locked_until = clock_timestamp() + make_interval(secs => ?), updated_at = now()
+              WHERE id = ? AND status = ? AND (locked_until IS NULL OR locked_until < clock_timestamp())
+          RETURNING locked_until',
+            [self::LOCK_SECONDS, $conversation->id, ConversationStatus::Open->value],
+        );
 
-        if ($claimed === 1) {
-            return;
+        if ($claimed !== null) {
+            return $claimed->locked_until;
         }
 
         $current = Conversation::query()->select(['id', 'status'])->find($conversation->id);
@@ -50,8 +51,15 @@ final class ConversationTurnLock
         throw new ConversationBusy;
     }
 
-    public function release(Conversation $conversation): void
+    /**
+     * Clears the claim only if it is still ours. A turn that stalled past LOCK_SECONDS may have lost
+     * the conversation to a newer turn, and must not release that turn's claim.
+     */
+    public function release(Conversation $conversation, string $claim): void
     {
-        Conversation::query()->whereKey($conversation->id)->update(['locked_until' => null]);
+        Conversation::query()
+            ->whereKey($conversation->id)
+            ->where('locked_until', $claim)
+            ->update(['locked_until' => null]);
     }
 }

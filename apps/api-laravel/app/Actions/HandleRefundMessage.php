@@ -74,7 +74,7 @@ final readonly class HandleRefundMessage
     public function __invoke(Conversation $conversation, SendMessageData $data): MessageOutcome
     {
         // 2b. One turn at a time: claim the conversation before anything is stored or sent to the model.
-        $this->turnLock->claim($conversation);
+        $claim = $this->turnLock->claim($conversation);
 
         try {
             // Re-read under the lock: a turn that finished between route binding and the claim may
@@ -83,7 +83,7 @@ final readonly class HandleRefundMessage
 
             return $this->handle($conversation, $data);
         } finally {
-            $this->turnLock->release($conversation);
+            $this->turnLock->release($conversation, $claim);
         }
     }
 

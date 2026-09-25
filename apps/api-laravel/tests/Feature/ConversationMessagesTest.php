@@ -10,6 +10,7 @@ use App\Models\AuditEvent;
 use App\Models\Conversation;
 use App\Models\Message;
 use App\Models\RefundRequest;
+use App\Support\ConversationTurnLock;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
@@ -380,5 +381,27 @@ describe('one turn at a time', function (): void {
         DB::table('conversations')->where('id', $conversationId)->update(['locked_until' => DB::raw("now() + interval '60 seconds'")]);
 
         send_message($conversationId, '', [])->assertUnprocessable()->assertJsonPath('error.code', 'VALIDATION_FAILED');
+    });
+});
+
+describe('turn lock ownership', function (): void {
+    it('does not let a stalled turn release a newer turn\'s claim', function (): void {
+        [$conversationId] = start_conversation('ada.okafor@example.com', 'WN-1001');
+        $conversation = Conversation::query()->findOrFail($conversationId);
+        $lock = app(ConversationTurnLock::class);
+
+        $stalled = $lock->claim($conversation);
+
+        // The stalled turn's claim expires and a newer turn takes the conversation.
+        DB::table('conversations')->where('id', $conversationId)->update(['locked_until' => DB::raw("now() - interval '1 second'")]);
+        $newer = $lock->claim($conversation);
+        expect($newer)->not->toBe($stalled);
+
+        // The stalled turn finally finishes: its release must leave the newer claim in place.
+        $lock->release($conversation, $stalled);
+        expect(Conversation::query()->findOrFail($conversationId)->locked_until)->not->toBeNull();
+
+        $lock->release($conversation, $newer);
+        expect(Conversation::query()->findOrFail($conversationId)->locked_until)->toBeNull();
     });
 });
