@@ -1,0 +1,214 @@
+// Tables and columns follow docs/pipeline.md (snake_case in the database, camelCase in code).
+
+generator client {
+  provider            = "prisma-client"
+  output              = "../src/generated/prisma"
+  moduleFormat        = "esm"
+  importFileExtension = "js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum OrderStatus {
+  processing
+  shipped
+  delivered
+
+  @@map("order_status")
+}
+
+enum ConversationStatus {
+  open
+  closed
+
+  @@map("conversation_status")
+}
+
+enum MessageRole {
+  customer
+  assistant
+  system
+
+  @@map("message_role")
+}
+
+enum RefundStatus {
+  approved
+  denied
+  escalated
+
+  @@map("refund_status")
+}
+
+enum DecidedBy {
+  policy
+  human
+  import
+
+  @@map("decided_by")
+}
+
+enum ReasonCategory {
+  damaged
+  defective
+  wrong_item
+  changed_mind
+  not_received
+  other
+  unclear
+
+  @@map("reason_category")
+}
+
+enum ReviewDecision {
+  approve
+  deny
+
+  @@map("review_decision")
+}
+
+model Customer {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  email     String   @unique
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  orders         Order[]
+  conversations  Conversation[]
+  refundRequests RefundRequest[]
+
+  @@map("customers")
+}
+
+model Order {
+  id          String      @id @default(uuid()) @db.Uuid
+  customerId  String      @map("customer_id") @db.Uuid
+  orderNumber String      @unique @map("order_number")
+  status      OrderStatus
+  placedAt    DateTime    @map("placed_at") @db.Timestamptz(3)
+  deliveredAt DateTime?   @map("delivered_at") @db.Timestamptz(3)
+  createdAt   DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  customer       Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  items          OrderItem[]
+  conversations  Conversation[]
+  refundRequests RefundRequest[]
+
+  @@index([customerId])
+  @@map("orders")
+}
+
+model OrderItem {
+  id             String  @id @default(uuid()) @db.Uuid
+  orderId        String  @map("order_id") @db.Uuid
+  sku            String
+  name           String
+  unitPriceCents Int     @map("unit_price_cents")
+  quantity       Int
+  finalSale      Boolean @default(false) @map("final_sale")
+
+  order              Order               @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  refundRequestItems RefundRequestItem[]
+
+  @@index([orderId])
+  @@map("order_items")
+}
+
+model Conversation {
+  id                 String             @id @default(uuid()) @db.Uuid
+  customerId         String             @map("customer_id") @db.Uuid
+  orderId            String             @map("order_id") @db.Uuid
+  status             ConversationStatus @default(open)
+  clarificationTurns Int                @default(0) @map("clarification_turns")
+  createdAt          DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  customer       Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  order          Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  messages       Message[]
+  refundRequests RefundRequest[]
+  auditEvents    AuditEvent[]
+
+  @@index([customerId])
+  @@index([orderId])
+  @@map("conversations")
+}
+
+model Message {
+  id             String      @id @default(uuid()) @db.Uuid
+  conversationId String      @map("conversation_id") @db.Uuid
+  role           MessageRole
+  content        String
+  itemIds        Json?       @map("item_ids")
+  createdAt      DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+  @@map("messages")
+}
+
+model RefundRequest {
+  id              String          @id @default(uuid()) @db.Uuid
+  conversationId  String?         @map("conversation_id") @db.Uuid
+  customerId      String          @map("customer_id") @db.Uuid
+  orderId         String          @map("order_id") @db.Uuid
+  status          RefundStatus
+  decidedBy       DecidedBy       @map("decided_by")
+  reasonCategory  ReasonCategory? @map("reason_category")
+  amountCents     Int             @map("amount_cents")
+  currency        String
+  decisiveRuleIds Json            @map("decisive_rule_ids")
+  flags           Json
+  trace           Json?
+  reviewDecision  ReviewDecision? @map("review_decision")
+  reviewNote      String?         @map("review_note")
+  reviewedBy      String?         @map("reviewed_by")
+  reviewedAt      DateTime?       @map("reviewed_at") @db.Timestamptz(3)
+  createdAt       DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  conversation Conversation?       @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  customer     Customer            @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  order        Order               @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  items        RefundRequestItem[]
+  auditEvents  AuditEvent[]
+
+  @@index([customerId, status, createdAt])
+  @@index([conversationId])
+  @@index([status, createdAt])
+  @@map("refund_requests")
+}
+
+model RefundRequestItem {
+  id              String @id @default(uuid()) @db.Uuid
+  refundRequestId String @map("refund_request_id") @db.Uuid
+  orderItemId     String @map("order_item_id") @db.Uuid
+  amountCents     Int    @map("amount_cents")
+
+  refundRequest RefundRequest @relation(fields: [refundRequestId], references: [id], onDelete: Cascade)
+  orderItem     OrderItem     @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+
+  @@index([refundRequestId])
+  @@index([orderItemId])
+  @@map("refund_request_items")
+}
+
+model AuditEvent {
+  id              String   @id @default(uuid()) @db.Uuid
+  type            String
+  actor           String
+  conversationId  String?  @map("conversation_id") @db.Uuid
+  refundRequestId String?  @map("refund_request_id") @db.Uuid
+  data            Json
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  conversation  Conversation?  @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  refundRequest RefundRequest? @relation(fields: [refundRequestId], references: [id], onDelete: SetNull)
+
+  @@index([conversationId])
+  @@index([refundRequestId])
+  @@map("audit_events")
+}
